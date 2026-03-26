@@ -10,9 +10,11 @@ Current security solutions fail to address the simultaneous requirements for hig
 
 There is a critical need for a system that can actively deceive attackers at wire speed, invalidating their reconnaissance data and disrupting the lateral movement process before it can escalate into a full-scale breach. This project proposes an Active Defense Gateway (ADG) that utilizes Software-Defined Networking (SDN) and kernel-resident programs to implement "Cognitive Network Camouflage." By altering the perceived reality of the network based on the intent of the observer, the ADG aims to tilt the scales of cyber warfare back in favor of the defender.1
 
-## **2\. SDN Architecture Overview**
+## **2. SDN Architecture Overview**
 
-Software-Defined Networking (SDN) is a revolutionary paradigm that decouples the network's control logic from the underlying forwarding hardware.9 This separation enables a logically centralized view of the entire network, allowing for dynamic programmability and rapid adaptation to emerging security threats.9 Unlike traditional networks, where each switch or router must be configured individually with vendor-specific commands, SDN provides a standardized framework for managing network behavior through software.9
+Software-Defined Networking (SDN) is a revolutionary paradigm that decouples the network's control logic from the underlying forwarding hardware. This separation enables a logically centralized view of the entire network, allowing for dynamic programmability and rapid adaptation to emerging security threats. Unlike traditional networks, where each switch or router must be configured individually with vendor-specific commands, SDN provides a standardized framework for managing network behavior through software.
+
+![SDN Architecture Diagram](https://raw.githubusercontent.com/ksskarthik18/Active_Defence_Gateway/main/adg_architectureDiagram.png)
 
 ### **2.1 The Three-Plane Model**
 
