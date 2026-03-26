@@ -1,0 +1,17 @@
+[package]
+name = "active-defense-gateway-ebpf"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+active-defense-gateway-common = { path = "../active-defense-gateway-common" }
+
+aya-ebpf = { workspace = true }
+aya-log-ebpf = { workspace = true }
+
+[build-dependencies]
+which = { workspace = true }
+
+[[bin]]
+name = "active-defense-gateway"
+path = "src/main.rs"
