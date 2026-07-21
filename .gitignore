@@ -1,0 +1,113 @@
+############################
+# Rust / Aya eBPF
+############################
+
+target/
+**/target/
+
+**/incremental/
+**/*.d
+**/*.o
+**/*.rlib
+**/*.rmeta
+**/*.so
+**/*.a
+**/*.ll
+**/*.bc
+
+# Aya generated
+**/aya-build/
+**/bpfel-unknown-none/
+**/bpfeb-unknown-none/
+
+
+############################
+# Python
+############################
+
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+sdn-env/
+venv/
+env/
+.venv/
+
+
+############################
+# OS-Ken
+############################
+
+# External SDN framework
+os-ken/
+
+# Python package metadata
+*.egg-info/
+
+
+############################
+# Mininet / Open vSwitch
+############################
+
+*.log
+*.pid
+*.mn
+
+
+############################
+# Environment files
+############################
+
+.env
+.env.*
+!.env.example
+
+
+############################
+# IDE
+############################
+
+.vscode/
+.idea/
+*.code-workspace
+
+
+############################
+# Coverage / Testing
+############################
+
+*.profraw
+*.profdata
+coverage/
+tarpaulin-report.html
+
+*.gcda
+*.gcno
+*.gcov
+
+
+############################
+# Temporary files
+############################
+
+tmp/
+temp/
+
+
+############################
+# OS generated
+############################
+
+.DS_Store
+Thumbs.db
+.directory
+
+
+############################
+# Generated binaries
+############################
+
+*.exe
+*.dll
+*.dylib

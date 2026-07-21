@@ -1,0 +1,17 @@
+[package]
+name = "adg-xdp-ebpf"
+version = "0.1.0"
+edition.workspace = true
+
+[dependencies]
+adg-xdp-common = { path = "../adg-xdp-common" }
+
+aya-ebpf = { workspace = true }
+aya-log-ebpf = { workspace = true }
+
+[build-dependencies]
+which = { workspace = true }
+
+[[bin]]
+name = "adg-xdp"
+path = "src/main.rs"
