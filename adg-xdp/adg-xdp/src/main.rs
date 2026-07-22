@@ -1,8 +1,12 @@
 use anyhow::Context as _;
-use aya::programs::{Xdp, XdpFlags};
+use aya::{
+    maps::HashMap,
+    programs::{Xdp, XdpFlags},
+};
 use clap::Parser;
 #[rustfmt::skip]
 use log::{debug, warn};
+use std::{net::Ipv4Addr, time::Duration};
 use tokio::signal;
 
 #[derive(Debug, Parser)]
@@ -59,10 +63,41 @@ async fn main() -> anyhow::Result<()> {
     program.attach(&iface, XdpFlags::default())
         .context("failed to attach the XDP program with default flags - try changing XdpFlags::default() to XdpFlags::SKB_MODE")?;
 
+    let packet_counts: HashMap<_, u32, u64> =
+        HashMap::try_from(ebpf.map("PACKET_COUNTS").ok_or_else(|| anyhow::anyhow!("PACKET_COUNTS map not found"))?)?;
+
+    println!("Attached XDP program to {iface}. Monitoring PACKET_COUNTS map...");
     let ctrl_c = signal::ctrl_c();
-    println!("Waiting for Ctrl-C...");
-    ctrl_c.await?;
-    println!("Exiting...");
+    tokio::pin!(ctrl_c);
+
+    loop {
+        tokio::select! {
+            _ = &mut ctrl_c => {
+                println!("\nReceived Ctrl-C, exiting...");
+                break;
+            }
+            _ = tokio::time::sleep(Duration::from_secs(2)) => {
+                let mut entries = Vec::new();
+                for item in packet_counts.iter() {
+                    if let Ok((ip, count)) = item {
+                        entries.push((Ipv4Addr::from(ip), count));
+                    }
+                }
+                if !entries.is_empty() {
+                    entries.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
+                    println!("\n-------------------------------------------");
+                    println!("{:<20} | {}", "Host / Source IP", "Packets Seen");
+                    println!("-------------------------------------------");
+                    for (ip, count) in entries {
+                        println!("{:<20} | {}", ip.to_string(), count);
+                    }
+                    println!("-------------------------------------------");
+                } else {
+                    debug!("PACKET_COUNTS map currently empty.");
+                }
+            }
+        }
+    }
 
     Ok(())
 }
