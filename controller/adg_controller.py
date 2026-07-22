@@ -5,13 +5,17 @@ from os_ken.controller.handler import set_ev_cls
 from os_ken.ofproto import ofproto_v1_3
 from os_ken.lib.packet import packet
 from os_ken.lib.packet import ethernet
+from policy import Action, evaluate_packet
+from utils import get_logger, debug_packet
+
+logger = get_logger("ADG")
 
 
-class SimpleSwitch13(app_manager.OSKenApp):
+class ADGController(app_manager.OSKenApp):
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
 
     def __init__(self, *args, **kwargs):
-        super(SimpleSwitch13, self).__init__(*args, **kwargs)
+        super(ADGController, self).__init__(*args, **kwargs)
         self.mac_to_port = {}
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
@@ -91,10 +95,15 @@ class SimpleSwitch13(app_manager.OSKenApp):
 
         self.mac_to_port[dpid][src] = in_port
 
-        if dst in self.mac_to_port[dpid]:
-            out_port = self.mac_to_port[dpid][dst]
+        decision = evaluate_packet(src, dst, in_port)
+
+        if decision == Action.DROP:
+            return
         else:
-            out_port = ofproto.OFPP_FLOOD
+            if dst in self.mac_to_port[dpid]:
+                out_port = self.mac_to_port[dpid][dst]
+            else:
+                out_port = ofproto.OFPP_FLOOD
 
         actions = [parser.OFPActionOutput(out_port)]
 
