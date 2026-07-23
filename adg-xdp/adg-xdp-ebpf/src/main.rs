@@ -65,6 +65,21 @@ fn try_adg_xdp(ctx: XdpContext) -> Result<u32, ()> {
     let src_addr = u32::from_be(ipv4.src_addr);
     let pkt_len = u16::from_be(ipv4.tot_len) as u64;
 
+    let mut is_syn = 0;
+    if ipv4.protocol == 6 {
+        let ip_header_len = ((ipv4.version_ihl & 0x0F) * 4) as usize;
+        let tcp_offset = eth_len + ip_header_len;
+
+        if let Ok(tcp_ptr) = ptr_at::<TcpHdr>(&ctx, tcp_offset) {
+            // Using read_unaligned to prevent Rust UB on unaligned packet data
+            let tcp = unsafe { core::ptr::read_unaligned(tcp_ptr) };
+            let flags = u16::from_be(tcp.data_offset_reserved_flags) & 0x01FF;
+            if flags & TCP_SYN != 0 {
+                is_syn = 1;
+            }
+        }
+    }
+
     // Update per-host telemetry in the BPF map
     let stats = HOST_STATS.get_ptr_mut(&src_addr);
     if let Some(stats_ptr) = stats {
@@ -75,47 +90,20 @@ fn try_adg_xdp(ctx: XdpContext) -> Result<u32, ()> {
                 1 => (*stats_ptr).icmp_packets += 1,
                 6 => {
                     (*stats_ptr).tcp_packets += 1;
-
-                    let ip_header_len = ((ipv4.version_ihl & 0x0F) * 4) as usize;
-                    let tcp_offset = eth_len + ip_header_len;
-
-                    if let Ok(tcp_ptr) = ptr_at::<TcpHdr>(&ctx, tcp_offset) {
-                        let tcp = &*tcp_ptr;
-                        let flags = u16::from_be(tcp.data_offset_reserved_flags) & 0x01FF;
-
-                        if flags & TCP_SYN != 0 {
-                            (*stats_ptr).syn_packets += 1;
-                        }
-                    }
+                    (*stats_ptr).syn_packets += is_syn;
                 }
                 17 => (*stats_ptr).udp_packets += 1,
                 _ => {}
             }
         }
     } else {
-        let mut syn_packets = 0;
-
-        if ipv4.protocol == 6 {
-            let ip_header_len = ((ipv4.version_ihl & 0x0F) * 4) as usize;
-            let tcp_offset = eth_len + ip_header_len;
-
-            if let Ok(tcp_ptr) = ptr_at::<TcpHdr>(&ctx, tcp_offset) {
-                let tcp = unsafe { &*tcp_ptr };
-                let flags = u16::from_be(tcp.data_offset_reserved_flags) & 0x01FF;
-
-                if flags & TCP_SYN != 0 {
-                    syn_packets = 1;
-                }
-            }
-        }
-
         let initial = HostStats {
             packets: 1,
             bytes: pkt_len,
             tcp_packets: if ipv4.protocol == 6 { 1 } else { 0 },
             udp_packets: if ipv4.protocol == 17 { 1 } else { 0 },
             icmp_packets: if ipv4.protocol == 1 { 1 } else { 0 },
-            syn_packets,
+            syn_packets: is_syn,
             last_seen: 0,
         };
         let _ = HOST_STATS.insert(&src_addr, &initial, 0);
