@@ -56,16 +56,16 @@ fn try_adg_xdp(ctx: XdpContext) -> Result<u32, ()> {
     let src_addr = u32::from_be(ipv4.src_addr);
     let pkt_len = u16::from_be(ipv4.tot_len) as u64;
 
-    // 3. Update or Insert HostStats in BPF HashMap
+    // Update per-host telemetry in the BPF map
     let stats = HOST_STATS.get_ptr_mut(&src_addr);
     if let Some(stats_ptr) = stats {
         unsafe {
             (*stats_ptr).packets += 1;
             (*stats_ptr).bytes += pkt_len;
             match ipv4.protocol {
+                1 => (*stats_ptr).icmp_packets += 1,
                 6 => (*stats_ptr).tcp_packets += 1,
                 17 => (*stats_ptr).udp_packets += 1,
-                1 => (*stats_ptr).icmp_packets += 1,
                 _ => {}
             }
         }
