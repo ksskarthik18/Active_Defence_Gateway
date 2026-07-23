@@ -45,6 +45,7 @@ unsafe impl aya::Pod for HostStats {}
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
+#[allow(dead_code)] // temporary 
 pub struct TcpHdr {
     pub src_port: u16,
     pub dst_port: u16,
