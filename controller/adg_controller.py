@@ -5,7 +5,7 @@ from os_ken.controller.handler import set_ev_cls
 from os_ken.ofproto import ofproto_v1_3
 from os_ken.lib.packet import packet
 from os_ken.lib.packet import ethernet
-from policy import Action, evaluate_packet
+from policy import Action, PolicyEngine
 from utils import get_logger, debug_packet
 
 logger = get_logger("ADG")
@@ -17,6 +17,7 @@ class ADGController(app_manager.OSKenApp):
     def __init__(self, *args, **kwargs):
         super(ADGController, self).__init__(*args, **kwargs)
         self.mac_to_port = {}
+        self.policy_engine = PolicyEngine()
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
@@ -95,7 +96,7 @@ class ADGController(app_manager.OSKenApp):
 
         self.mac_to_port[dpid][src] = in_port
 
-        decision = evaluate_packet(src, dst, in_port)
+        decision = self.policy_engine.evaluate(src, dst, in_port)
 
         if decision == Action.DROP:
             return

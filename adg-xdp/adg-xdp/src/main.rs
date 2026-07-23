@@ -1,3 +1,4 @@
+use adg_xdp_common::HostStats;
 use anyhow::Context as _;
 use aya::{
     maps::HashMap,
@@ -63,10 +64,10 @@ async fn main() -> anyhow::Result<()> {
     program.attach(&iface, XdpFlags::default())
         .context("failed to attach the XDP program with default flags - try changing XdpFlags::default() to XdpFlags::SKB_MODE")?;
 
-    let packet_counts: HashMap<_, u32, u64> =
-        HashMap::try_from(ebpf.map("PACKET_COUNTS").ok_or_else(|| anyhow::anyhow!("PACKET_COUNTS map not found"))?)?;
+    let host_stats: HashMap<_, u32, HostStats> =
+        HashMap::try_from(ebpf.map("HOST_STATS").ok_or_else(|| anyhow::anyhow!("HOST_STATS map not found"))?)?;
 
-    println!("Attached XDP program to {iface}. Monitoring PACKET_COUNTS map...");
+    println!("Attached XDP program to {iface}. Monitoring HOST_STATS map...");
     let ctrl_c = signal::ctrl_c();
     tokio::pin!(ctrl_c);
 
@@ -78,22 +79,29 @@ async fn main() -> anyhow::Result<()> {
             }
             _ = tokio::time::sleep(Duration::from_secs(2)) => {
                 let mut entries = Vec::new();
-                for item in packet_counts.iter() {
-                    if let Ok((ip, count)) = item {
-                        entries.push((Ipv4Addr::from(ip), count));
+                for item in host_stats.iter() {
+                    if let Ok((ip, stats)) = item {
+                        entries.push((Ipv4Addr::from(ip), stats));
                     }
                 }
                 if !entries.is_empty() {
-                    entries.sort_by_key(|(_, count)| std::cmp::Reverse(*count));
-                    println!("\n-------------------------------------------");
-                    println!("{:<20} | {}", "Host / Source IP", "Packets Seen");
-                    println!("-------------------------------------------");
-                    for (ip, count) in entries {
-                        println!("{:<20} | {}", ip.to_string(), count);
+                    entries.sort_by_key(|(_, stats)| std::cmp::Reverse(stats.packets));
+                    println!("\n----------------------------------------------------------------------------------");
+                    println!("{:<16} | {:<10} | {:<12} | {:<10} | {:<8} | {:<8}", "Host / Source IP", "Packets", "Bytes", "TCP", "UDP", "ICMP");
+                    println!("----------------------------------------------------------------------------------");
+                    for (ip, stats) in entries {
+                        println!("{:<16} | {:<10} | {:<12} | {:<10} | {:<8} | {:<8}",
+                            ip.to_string(),
+                            stats.packets,
+                            stats.bytes,
+                            stats.tcp_packets,
+                            stats.udp_packets,
+                            stats.icmp_packets
+                        );
                     }
-                    println!("-------------------------------------------");
+                    println!("----------------------------------------------------------------------------------");
                 } else {
-                    debug!("PACKET_COUNTS map currently empty.");
+                    debug!("HOST_STATS map currently empty.");
                 }
             }
         }

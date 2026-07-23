@@ -24,3 +24,22 @@ pub struct Ipv4Hdr {
     pub src_addr: u32,
     pub dst_addr: u32,
 }
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct HostStats {
+    pub packets: u64,
+    pub bytes: u64,
+
+    pub tcp_packets: u64,
+    pub udp_packets: u64,
+    pub icmp_packets: u64,
+
+    pub syn_packets: u64,
+
+    pub last_seen: u64,
+}
+
+#[cfg(feature = "user")]
+unsafe impl aya::Pod for HostStats {}
+

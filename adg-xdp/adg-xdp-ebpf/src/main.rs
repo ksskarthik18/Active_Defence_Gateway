@@ -1,7 +1,7 @@
 #![no_std]
 #![no_main]
 
-use adg_xdp_common::{EthHdr, Ipv4Hdr, MAX_ENTRIES};
+use adg_xdp_common::{EthHdr, HostStats, Ipv4Hdr, MAX_ENTRIES};
 use aya_ebpf::{
     bindings::xdp_action,
     macros::{map, xdp},
@@ -11,7 +11,8 @@ use aya_ebpf::{
 use aya_log_ebpf::info;
 
 #[map]
-static PACKET_COUNTS: HashMap<u32, u64> = HashMap::with_max_entries(MAX_ENTRIES, 0);
+static HOST_STATS: HashMap<u32, HostStats> =
+    HashMap::with_max_entries(MAX_ENTRIES, 0);
 
 #[xdp]
 pub fn adg_xdp(ctx: XdpContext) -> u32 {
@@ -53,15 +54,32 @@ fn try_adg_xdp(ctx: XdpContext) -> Result<u32, ()> {
     // Extract source IP. Converting from network byte order (big endian) to host byte order
     // so it matches std::net::Ipv4Addr::from(u32) in userspace.
     let src_addr = u32::from_be(ipv4.src_addr);
+    let pkt_len = u16::from_be(ipv4.tot_len) as u64;
 
-    // 3. Increment Counter in BPF HashMap
-    let count = PACKET_COUNTS.get_ptr_mut(&src_addr);
-    if let Some(count_ptr) = count {
+    // 3. Update or Insert HostStats in BPF HashMap
+    let stats = HOST_STATS.get_ptr_mut(&src_addr);
+    if let Some(stats_ptr) = stats {
         unsafe {
-            *count_ptr += 1;
+            (*stats_ptr).packets += 1;
+            (*stats_ptr).bytes += pkt_len;
+            match ipv4.protocol {
+                6 => (*stats_ptr).tcp_packets += 1,
+                17 => (*stats_ptr).udp_packets += 1,
+                1 => (*stats_ptr).icmp_packets += 1,
+                _ => {}
+            }
         }
     } else {
-        let _ = PACKET_COUNTS.insert(&src_addr, &1, 0);
+        let initial = HostStats {
+            packets: 1,
+            bytes: pkt_len,
+            tcp_packets: if ipv4.protocol == 6 { 1 } else { 0 },
+            udp_packets: if ipv4.protocol == 17 { 1 } else { 0 },
+            icmp_packets: if ipv4.protocol == 1 { 1 } else { 0 },
+            syn_packets: 0,
+            last_seen: 0,
+        };
+        let _ = HOST_STATS.insert(&src_addr, &initial, 0);
     }
 
     info!(&ctx, "packet seen from src: {:i}, action: PASS", ipv4.src_addr);
@@ -70,6 +88,7 @@ fn try_adg_xdp(ctx: XdpContext) -> Result<u32, ()> {
 }
 
 #[cfg(not(test))]
+#[cfg(target_arch = "bpf")]
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> ! {
     loop {}
