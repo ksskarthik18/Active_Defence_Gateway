@@ -43,3 +43,15 @@ pub struct HostStats {
 #[cfg(feature = "user")]
 unsafe impl aya::Pod for HostStats {}
 
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct TcpHdr {
+    pub src_port: u16,
+    pub dst_port: u16,
+    pub seq: u32,
+    pub ack_seq: u32,
+    pub data_offset_reserved_flags: u16,
+    pub window: u16,
+    pub checksum: u16,
+    pub urg_ptr: u16,
+}

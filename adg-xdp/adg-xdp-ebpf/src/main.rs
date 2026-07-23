@@ -1,7 +1,14 @@
 #![no_std]
 #![no_main]
 
-use adg_xdp_common::{EthHdr, HostStats, Ipv4Hdr, MAX_ENTRIES};
+use adg_xdp_common::{
+    EthHdr,
+    Ipv4Hdr,
+    TcpHdr,
+    HostStats,
+    MAX_ENTRIES,
+};
+
 use aya_ebpf::{
     bindings::xdp_action,
     macros::{map, xdp},
@@ -9,6 +16,8 @@ use aya_ebpf::{
     programs::XdpContext,
 };
 use aya_log_ebpf::info;
+
+const TCP_SYN: u16 = 0x0002;
 
 #[map]
 static HOST_STATS: HashMap<u32, HostStats> =
@@ -64,19 +73,49 @@ fn try_adg_xdp(ctx: XdpContext) -> Result<u32, ()> {
             (*stats_ptr).bytes += pkt_len;
             match ipv4.protocol {
                 1 => (*stats_ptr).icmp_packets += 1,
-                6 => (*stats_ptr).tcp_packets += 1,
+                6 => {
+                    (*stats_ptr).tcp_packets += 1;
+
+                    let ip_header_len = ((ipv4.version_ihl & 0x0F) * 4) as usize;
+                    let tcp_offset = eth_len + ip_header_len;
+
+                    if let Ok(tcp_ptr) = ptr_at::<TcpHdr>(&ctx, tcp_offset) {
+                        let tcp = &*tcp_ptr;
+                        let flags = u16::from_be(tcp.data_offset_reserved_flags) & 0x01FF;
+
+                        if flags & TCP_SYN != 0 {
+                            (*stats_ptr).syn_packets += 1;
+                        }
+                    }
+                }
                 17 => (*stats_ptr).udp_packets += 1,
                 _ => {}
             }
         }
     } else {
+        let mut syn_packets = 0;
+
+        if ipv4.protocol == 6 {
+            let ip_header_len = ((ipv4.version_ihl & 0x0F) * 4) as usize;
+            let tcp_offset = eth_len + ip_header_len;
+
+            if let Ok(tcp_ptr) = ptr_at::<TcpHdr>(&ctx, tcp_offset) {
+                let tcp = unsafe { &*tcp_ptr };
+                let flags = u16::from_be(tcp.data_offset_reserved_flags) & 0x01FF;
+
+                if flags & TCP_SYN != 0 {
+                    syn_packets = 1;
+                }
+            }
+        }
+
         let initial = HostStats {
             packets: 1,
             bytes: pkt_len,
             tcp_packets: if ipv4.protocol == 6 { 1 } else { 0 },
             udp_packets: if ipv4.protocol == 17 { 1 } else { 0 },
             icmp_packets: if ipv4.protocol == 1 { 1 } else { 0 },
-            syn_packets: 0,
+            syn_packets,
             last_seen: 0,
         };
         let _ = HOST_STATS.insert(&src_addr, &initial, 0);
