@@ -136,6 +136,45 @@ fn syn_behavior(stats: &HostStats) -> SynBehavior {
 
 
 
+#[derive(Debug)]
+enum RecentActivity {
+    Active,
+    Recent,
+    Idle,
+}
+
+impl std::fmt::Display for RecentActivity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            RecentActivity::Active => "ACTIVE",
+            RecentActivity::Recent => "RECENT",
+            RecentActivity::Idle => "IDLE",
+        };
+        write!(f, "{}", s)
+    }
+}
+
+fn activity_state(idle_ns: u64) -> RecentActivity {
+    const SECOND: u64 = 1_000_000_000;
+
+    if idle_ns < 5 * SECOND {
+        RecentActivity::Active
+    } else if idle_ns < 30 * SECOND {
+        RecentActivity::Recent
+    } else {
+        RecentActivity::Idle
+    }
+}
+
+fn get_ktime_ns() -> u64 {
+    let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    unsafe {
+        libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts);
+    }
+    (ts.tv_sec as u64) * 1_000_000_000 + (ts.tv_nsec as u64)
+}
+
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let opt = Opt::parse();
@@ -206,16 +245,18 @@ async fn main() -> anyhow::Result<()> {
                 }
                 if !entries.is_empty() {
                     entries.sort_by_key(|(_, stats)| std::cmp::Reverse(stats.packets));
-                    println!("\n---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------");
-                    println!("{:<16} | {:<10} | {:<12} | {:<10} | {:<8} | {:<8} | {:<8} | {:<15} | {:<10} | {:<10} | {:<10} | {:<12}", "Host / Source IP", "Packets", "Bytes", "TCP", "UDP", "ICMP", "SYN", "Last Seen (ns)", "Activity", "Profile", "SYN Rate", "SYN Behavior");
-                    println!("---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------");
+                    println!("\n--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------");
+                    println!("{:<16} | {:<10} | {:<12} | {:<10} | {:<8} | {:<8} | {:<8} | {:<10} | {:<10} | {:<10} | {:<12} | {:<10}", "Host / Source IP", "Packets", "Bytes", "TCP", "UDP", "ICMP", "SYN", "Activity", "Profile", "SYN Rate", "SYN Behavior", "Status");
+                    println!("--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------");
+                    let current_time = get_ktime_ns();
                     for (ip, stats) in entries {
                         let rate_str = if stats.tcp_packets == 0 {
                             "N/A".to_string()
                         } else {
                             format!("{:.3}", syn_rate(&stats))
                         };
-                        println!("{:<16} | {:<10} | {:<12} | {:<10} | {:<8} | {:<8} | {:<8} | {:<15} | {:<10} | {:<10} | {:<10} | {:<12}",
+                        let idle_ns = current_time.saturating_sub(stats.last_seen);
+                        println!("{:<16} | {:<10} | {:<12} | {:<10} | {:<8} | {:<8} | {:<8} | {:<10} | {:<10} | {:<10} | {:<12} | {:<10}",
                             ip.to_string(),
                             stats.packets,
                             stats.bytes,
@@ -223,14 +264,14 @@ async fn main() -> anyhow::Result<()> {
                             stats.udp_packets,
                             stats.icmp_packets,
                             stats.syn_packets,
-                            stats.last_seen,
                             activity_level(&stats),
                             protocol_profile(&stats),
                             rate_str,
-                            syn_behavior(&stats)
+                            syn_behavior(&stats),
+                            activity_state(idle_ns)
                         );
                     }
-                    println!("---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------");
+                    println!("--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------");
                 } else {
                     debug!("HOST_STATS map currently empty.");
                 }
