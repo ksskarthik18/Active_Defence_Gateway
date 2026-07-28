@@ -13,6 +13,7 @@ logger = get_logger("ADG")
 
 class ADGController(app_manager.OSKenApp):
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
+    
 
     def __init__(self, *args, **kwargs):
         super(ADGController, self).__init__(*args, **kwargs)
@@ -97,6 +98,13 @@ class ADGController(app_manager.OSKenApp):
         self.mac_to_port[dpid][src] = in_port
 
         decision = self.policy_engine.evaluate(src, dst, in_port)
+
+        self.logger.info(
+            "Policy=%s SRC=%s DST=%s",
+            decision.name,
+            src,
+            dst
+        )
 
         if decision == Action.DROP:
             return
