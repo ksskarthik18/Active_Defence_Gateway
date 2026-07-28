@@ -194,6 +194,37 @@ pub struct TrustScore {
     pub score: u8,
 }
 
+#[derive(Debug)]
+pub enum TrustLevel {
+    Trusted,
+    Normal,
+    Suspicious,
+    Untrusted,
+}
+
+impl std::fmt::Display for TrustLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            TrustLevel::Trusted => "TRUSTED",
+            TrustLevel::Normal => "NORMAL",
+            TrustLevel::Suspicious => "SUSPICIOUS",
+            TrustLevel::Untrusted => "UNTRUSTED",
+        };
+        write!(f, "{}", s)
+    }
+}
+
+impl TrustScore {
+    pub fn level(&self) -> TrustLevel {
+        match self.score {
+            90..=100 => TrustLevel::Trusted,
+            70..=89 => TrustLevel::Normal,
+            40..=69 => TrustLevel::Suspicious,
+            _ => TrustLevel::Untrusted,
+        }
+    }
+}
+
 pub struct HostProfiler;
 
 impl HostProfiler {
@@ -328,9 +359,9 @@ async fn main() -> anyhow::Result<()> {
                 }
                 if !entries.is_empty() {
                     entries.sort_by_key(|(_, stats)| std::cmp::Reverse(stats.packets));
-                    println!("\n-------------------------------------------------------------------------------------------------------------------------");
-                    println!("{:<16} | {:<12} | {:<12} | {:<12} | {:<12} | {:<8}", "Host", "Activity", "Protocol", "SYN", "Recent", "Trust");
-                    println!("-------------------------------------------------------------------------------------------------------------------------");
+                    println!("\n-----------------------------------------------------------------------------------------------------------------------------------------");
+                    println!("{:<16} | {:<12} | {:<12} | {:<12} | {:<12} | {:<8} | {:<12}", "Host", "Activity", "Protocol", "SYN", "Recent", "Trust", "Level");
+                    println!("-----------------------------------------------------------------------------------------------------------------------------------------");
                     let current_time = get_ktime_ns();
                     for (ip, stats) in entries {
                         // Create HostProfile
@@ -338,16 +369,17 @@ async fn main() -> anyhow::Result<()> {
                         // Compute TrustScore
                         let trust = TrustEngine::compute(&profile);
                         
-                        println!("{:<16} | {:<12} | {:<12} | {:<12} | {:<12} | {:<8}",
+                        println!("{:<16} | {:<12} | {:<12} | {:<12} | {:<12} | {:<8} | {:<12}",
                             ip.to_string(),
                             profile.activity.to_string(),
                             profile.protocol.to_string(),
                             profile.syn_behavior.to_string(),
                             profile.recent_activity.to_string(),
-                            trust.score
+                            trust.score,
+                            trust.level().to_string()
                         );
                     }
-                    println!("-------------------------------------------------------------------------------------------------------------------------");
+                    println!("-----------------------------------------------------------------------------------------------------------------------------------------");
                 } else {
                     debug!("HOST_STATS map currently empty.");
                 }
