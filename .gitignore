@@ -5,6 +5,7 @@ activate_sdn_env.sh
 target/
 **/target/
 results/
+tests/
 
 **/incremental/
 **/*.d
