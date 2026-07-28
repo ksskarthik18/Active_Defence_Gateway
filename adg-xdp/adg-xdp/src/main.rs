@@ -7,8 +7,10 @@ use aya::{
 use clap::Parser;
 #[rustfmt::skip]
 use log::{debug, warn};
-use std::{net::Ipv4Addr, time::Duration};
+use std::{net::Ipv4Addr, time::Duration, sync::{Arc, RwLock}, collections::HashMap as StdHashMap, fs};
 use tokio::signal;
+use tokio::net::UnixListener;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[derive(Debug, Parser)]
 struct Opt {
@@ -72,6 +74,54 @@ async fn main() -> anyhow::Result<()> {
             });
         }
     }
+    
+    // Set up shared state for the Trust Engine Socket API
+    let trust_store = Arc::new(RwLock::new(StdHashMap::<String, u8>::new()));
+    
+    // Start Unix Domain Socket Server for OS-Ken Python controller
+    let socket_path = "/tmp/adg_trust.sock";
+    let _ = fs::remove_file(socket_path); // ignore error if it doesn't exist
+    
+    let listener = UnixListener::bind(socket_path).context("Failed to bind Unix Domain Socket")?;
+    let store_clone = trust_store.clone();
+    
+    tokio::spawn(async move {
+        println!("API Server listening at {}", socket_path);
+        loop {
+            match listener.accept().await {
+                Ok((mut socket, _addr)) => {
+                    let store = store_clone.clone();
+                    tokio::spawn(async move {
+                        let mut buf = vec![0; 1024];
+                        if let Ok(n) = socket.read(&mut buf).await {
+                            if n == 0 { return; }
+                            let request = String::from_utf8_lossy(&buf[..n]).trim().to_string();
+                            
+                            let response = if request.to_uppercase() == "ALL" {
+                                let map = store.read().unwrap();
+                                // simple json manually
+                                let items: Vec<String> = map.iter()
+                                    .map(|(ip, score)| format!("\"{}\": {}", ip, score))
+                                    .collect();
+                                format!("{{{}}}\n", items.join(", "))
+                            } else {
+                                // Request is an IP address
+                                let map = store.read().unwrap();
+                                let score = map.get(&request).copied().unwrap_or(100);
+                                format!("{}\n", score)
+                            };
+                            
+                            let _ = socket.write_all(response.as_bytes()).await;
+                        }
+                    });
+                }
+                Err(e) => {
+                    warn!("Unix socket accept failed: {}", e);
+                }
+            }
+        }
+    });
+
     let Opt { iface } = opt;
     let program: &mut Xdp = ebpf.program_mut("adg_xdp").unwrap().try_into()?;
     program.load()?;
@@ -89,6 +139,7 @@ async fn main() -> anyhow::Result<()> {
         tokio::select! {
             _ = &mut ctrl_c => {
                 println!("\nReceived Ctrl-C, exiting...");
+                let _ = fs::remove_file(socket_path); // Cleanup socket
                 break;
             }
             _ = tokio::time::sleep(Duration::from_secs(2)) => {
@@ -109,6 +160,12 @@ async fn main() -> anyhow::Result<()> {
                         let profile = HostProfiler::build(ip.into(), &stats, current_time);
                         // Compute TrustScore
                         let trust = TrustEngine::compute(&profile);
+                        
+                        // Push to trust store
+                        {
+                            let mut store = trust_store.write().unwrap();
+                            store.insert(ip.to_string(), trust.score);
+                        }
                         
                         println!("{:<16} | {:<12} | {:<12} | {:<12} | {:<12} | {:<8} | {:<12}",
                             ip.to_string(),
