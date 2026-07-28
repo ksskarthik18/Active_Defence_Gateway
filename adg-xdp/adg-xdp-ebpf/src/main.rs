@@ -14,6 +14,7 @@ use aya_ebpf::{
     macros::{map, xdp},
     maps::HashMap,
     programs::XdpContext,
+    helpers::bpf_ktime_get_ns,
 };
 use aya_log_ebpf::info;
 
@@ -95,6 +96,7 @@ fn try_adg_xdp(ctx: XdpContext) -> Result<u32, ()> {
                 17 => (*stats_ptr).udp_packets += 1,
                 _ => {}
             }
+            (*stats_ptr).last_seen = bpf_ktime_get_ns();
         }
     } else {
         let initial = HostStats {
@@ -104,7 +106,7 @@ fn try_adg_xdp(ctx: XdpContext) -> Result<u32, ()> {
             udp_packets: if ipv4.protocol == 17 { 1 } else { 0 },
             icmp_packets: if ipv4.protocol == 1 { 1 } else { 0 },
             syn_packets: is_syn,
-            last_seen: 0,
+            last_seen: unsafe { bpf_ktime_get_ns() },
         };
         let _ = HOST_STATS.insert(&src_addr, &initial, 0);
     }
