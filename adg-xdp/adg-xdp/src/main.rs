@@ -16,6 +16,39 @@ struct Opt {
     iface: String,
 }
 
+#[derive(Debug)]
+enum ActivityLevel {
+    Idle,
+    Low,
+    Medium,
+    High,
+}
+
+impl std::fmt::Display for ActivityLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            ActivityLevel::Idle => "IDLE",
+            ActivityLevel::Low => "LOW",
+            ActivityLevel::Medium => "MEDIUM",
+            ActivityLevel::High => "HIGH",
+        };
+        write!(f, "{}", s)
+    }
+}
+
+fn activity_level(stats: &HostStats) -> ActivityLevel {
+    if stats.packets == 0 {
+        ActivityLevel::Idle
+    } else if stats.packets < 50 {
+        ActivityLevel::Low
+    } else if stats.packets < 500 {
+        ActivityLevel::Medium
+    } else {
+        ActivityLevel::High
+    }
+}
+
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let opt = Opt::parse();
@@ -86,11 +119,11 @@ async fn main() -> anyhow::Result<()> {
                 }
                 if !entries.is_empty() {
                     entries.sort_by_key(|(_, stats)| std::cmp::Reverse(stats.packets));
-                    println!("\n-----------------------------------------------------------------------------------------------------------------------------");
-                    println!("{:<16} | {:<10} | {:<12} | {:<10} | {:<8} | {:<8} | {:<8} | {:<15}", "Host / Source IP", "Packets", "Bytes", "TCP", "UDP", "ICMP", "SYN", "Last Seen (ns)");
-                    println!("-----------------------------------------------------------------------------------------------------------------------------");
+                    println!("\n------------------------------------------------------------------------------------------------------------------------------------------");
+                    println!("{:<16} | {:<10} | {:<12} | {:<10} | {:<8} | {:<8} | {:<8} | {:<15} | {:<10}", "Host / Source IP", "Packets", "Bytes", "TCP", "UDP", "ICMP", "SYN", "Last Seen (ns)", "Activity");
+                    println!("------------------------------------------------------------------------------------------------------------------------------------------");
                     for (ip, stats) in entries {
-                        println!("{:<16} | {:<10} | {:<12} | {:<10} | {:<8} | {:<8} | {:<8} | {:<15}",
+                        println!("{:<16} | {:<10} | {:<12} | {:<10} | {:<8} | {:<8} | {:<8} | {:<15} | {:<10}",
                             ip.to_string(),
                             stats.packets,
                             stats.bytes,
@@ -98,10 +131,11 @@ async fn main() -> anyhow::Result<()> {
                             stats.udp_packets,
                             stats.icmp_packets,
                             stats.syn_packets,
-                            stats.last_seen
+                            stats.last_seen,
+                            activity_level(&stats)
                         );
                     }
-                    println!("-----------------------------------------------------------------------------------------------------------------------------");
+                    println!("------------------------------------------------------------------------------------------------------------------------------------------");
                 } else {
                     debug!("HOST_STATS map currently empty.");
                 }
