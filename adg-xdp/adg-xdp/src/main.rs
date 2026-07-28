@@ -17,7 +17,7 @@ struct Opt {
 }
 
 #[derive(Debug)]
-enum ActivityLevel {
+pub enum ActivityLevel {
     Idle,
     Low,
     Medium,
@@ -49,7 +49,7 @@ fn activity_level(stats: &HostStats) -> ActivityLevel {
 }
 
 #[derive(Debug)]
-enum ProtocolProfile {
+pub enum ProtocolProfile {
     TcpDominant,
     UdpDominant,
     IcmpDominant,
@@ -91,7 +91,7 @@ fn protocol_profile(stats: &HostStats) -> ProtocolProfile {
 }
 
 #[derive(Debug)]
-enum SynBehavior {
+pub enum SynBehavior {
     Normal,
     Moderate,
     Aggressive,
@@ -137,7 +137,7 @@ fn syn_behavior(stats: &HostStats) -> SynBehavior {
 
 
 #[derive(Debug)]
-enum RecentActivity {
+pub enum RecentActivity {
     Active,
     Recent,
     Idle,
@@ -174,6 +174,89 @@ fn get_ktime_ns() -> u64 {
     (ts.tv_sec as u64) * 1_000_000_000 + (ts.tv_nsec as u64)
 }
 
+#[derive(Debug)]
+pub struct HostProfile {
+    pub ip: u32,
+    pub packets: u64,
+    pub bytes: u64,
+    pub tcp: u64,
+    pub udp: u64,
+    pub icmp: u64,
+    pub syn: u64,
+    pub last_seen: u64,
+    pub activity: ActivityLevel,
+    pub protocol: ProtocolProfile,
+    pub syn_behavior: SynBehavior,
+    pub recent_activity: RecentActivity,
+}
+
+pub struct TrustScore {
+    pub score: u8,
+}
+
+pub struct HostProfiler;
+
+impl HostProfiler {
+    pub fn build(ip: u32, stats: &HostStats, current_time: u64) -> HostProfile {
+        let idle_ns = current_time.saturating_sub(stats.last_seen);
+        HostProfile {
+            ip,
+            packets: stats.packets,
+            bytes: stats.bytes,
+            tcp: stats.tcp_packets,
+            udp: stats.udp_packets,
+            icmp: stats.icmp_packets,
+            syn: stats.syn_packets,
+            last_seen: stats.last_seen,
+            activity: activity_level(stats),
+            protocol: protocol_profile(stats),
+            syn_behavior: syn_behavior(stats),
+            recent_activity: activity_state(idle_ns),
+        }
+    }
+}
+
+pub struct TrustEngine;
+
+impl TrustEngine {
+    pub fn compute(profile: &HostProfile) -> TrustScore {
+        let mut trust: i32 = 100;
+
+        match profile.activity {
+            ActivityLevel::High => {}
+            ActivityLevel::Medium => trust -= 5,
+            ActivityLevel::Low => trust -= 10,
+            ActivityLevel::Idle => trust -= 15,
+        }
+
+        match profile.protocol {
+            ProtocolProfile::TcpDominant => {}
+            ProtocolProfile::UdpDominant => {}
+            ProtocolProfile::IcmpDominant => {}
+            ProtocolProfile::Mixed => trust -= 5,
+            ProtocolProfile::Unknown => trust -= 10,
+        }
+
+        match profile.syn_behavior {
+            SynBehavior::Normal => {}
+            SynBehavior::Moderate => trust -= 20,
+            SynBehavior::Aggressive => trust -= 50,
+            SynBehavior::Unknown => {}
+        }
+
+        match profile.recent_activity {
+            RecentActivity::Active => {}
+            RecentActivity::Recent => trust -= 5,
+            RecentActivity::Idle => trust -= 15,
+        }
+
+        trust = trust.clamp(0, 100);
+
+        TrustScore {
+            score: trust as u8,
+        }
+    }
+}
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -245,33 +328,26 @@ async fn main() -> anyhow::Result<()> {
                 }
                 if !entries.is_empty() {
                     entries.sort_by_key(|(_, stats)| std::cmp::Reverse(stats.packets));
-                    println!("\n--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------");
-                    println!("{:<16} | {:<10} | {:<12} | {:<10} | {:<8} | {:<8} | {:<8} | {:<10} | {:<10} | {:<10} | {:<12} | {:<10}", "Host / Source IP", "Packets", "Bytes", "TCP", "UDP", "ICMP", "SYN", "Activity", "Profile", "SYN Rate", "SYN Behavior", "Status");
-                    println!("--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------");
+                    println!("\n-------------------------------------------------------------------------------------------------------------------------");
+                    println!("{:<16} | {:<12} | {:<12} | {:<12} | {:<12} | {:<8}", "Host", "Activity", "Protocol", "SYN", "Recent", "Trust");
+                    println!("-------------------------------------------------------------------------------------------------------------------------");
                     let current_time = get_ktime_ns();
                     for (ip, stats) in entries {
-                        let rate_str = if stats.tcp_packets == 0 {
-                            "N/A".to_string()
-                        } else {
-                            format!("{:.3}", syn_rate(&stats))
-                        };
-                        let idle_ns = current_time.saturating_sub(stats.last_seen);
-                        println!("{:<16} | {:<10} | {:<12} | {:<10} | {:<8} | {:<8} | {:<8} | {:<10} | {:<10} | {:<10} | {:<12} | {:<10}",
+                        // Create HostProfile
+                        let profile = HostProfiler::build(ip.into(), &stats, current_time);
+                        // Compute TrustScore
+                        let trust = TrustEngine::compute(&profile);
+                        
+                        println!("{:<16} | {:<12} | {:<12} | {:<12} | {:<12} | {:<8}",
                             ip.to_string(),
-                            stats.packets,
-                            stats.bytes,
-                            stats.tcp_packets,
-                            stats.udp_packets,
-                            stats.icmp_packets,
-                            stats.syn_packets,
-                            activity_level(&stats),
-                            protocol_profile(&stats),
-                            rate_str,
-                            syn_behavior(&stats),
-                            activity_state(idle_ns)
+                            profile.activity.to_string(),
+                            profile.protocol.to_string(),
+                            profile.syn_behavior.to_string(),
+                            profile.recent_activity.to_string(),
+                            trust.score
                         );
                     }
-                    println!("--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------");
+                    println!("-------------------------------------------------------------------------------------------------------------------------");
                 } else {
                     debug!("HOST_STATS map currently empty.");
                 }
