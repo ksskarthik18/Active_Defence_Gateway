@@ -90,6 +90,50 @@ fn protocol_profile(stats: &HostStats) -> ProtocolProfile {
     }
 }
 
+#[derive(Debug)]
+enum SynBehavior {
+    Normal,
+    Moderate,
+    Aggressive,
+    Unknown,
+}
+
+impl std::fmt::Display for SynBehavior {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            SynBehavior::Normal => "NORMAL",
+            SynBehavior::Moderate => "MODERATE",
+            SynBehavior::Aggressive => "AGGRESSIVE",
+            SynBehavior::Unknown => "UNKNOWN",
+        };
+        write!(f, "{}", s)
+    }
+}
+
+fn syn_rate(stats: &HostStats) -> f64 {
+    if stats.tcp_packets == 0 {
+        return 0.0;
+    }
+    stats.syn_packets as f64 / stats.tcp_packets as f64
+}
+
+fn syn_behavior(stats: &HostStats) -> SynBehavior {
+    if stats.tcp_packets == 0 {
+        return SynBehavior::Unknown;
+    }
+
+    let rate = syn_rate(stats);
+
+    if rate < 0.05 {
+        SynBehavior::Normal
+    } else if rate < 0.20 {
+        SynBehavior::Moderate
+    } else {
+        SynBehavior::Aggressive
+    }
+}
+
+
 
 
 #[tokio::main]
@@ -162,11 +206,16 @@ async fn main() -> anyhow::Result<()> {
                 }
                 if !entries.is_empty() {
                     entries.sort_by_key(|(_, stats)| std::cmp::Reverse(stats.packets));
-                    println!("\n---------------------------------------------------------------------------------------------------------------------------------------------------");
-                    println!("{:<16} | {:<10} | {:<12} | {:<10} | {:<8} | {:<8} | {:<8} | {:<15} | {:<10} | {:<10}", "Host / Source IP", "Packets", "Bytes", "TCP", "UDP", "ICMP", "SYN", "Last Seen (ns)", "Activity", "Profile");
-                    println!("---------------------------------------------------------------------------------------------------------------------------------------------------");
+                    println!("\n---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------");
+                    println!("{:<16} | {:<10} | {:<12} | {:<10} | {:<8} | {:<8} | {:<8} | {:<15} | {:<10} | {:<10} | {:<10} | {:<12}", "Host / Source IP", "Packets", "Bytes", "TCP", "UDP", "ICMP", "SYN", "Last Seen (ns)", "Activity", "Profile", "SYN Rate", "SYN Behavior");
+                    println!("---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------");
                     for (ip, stats) in entries {
-                        println!("{:<16} | {:<10} | {:<12} | {:<10} | {:<8} | {:<8} | {:<8} | {:<15} | {:<10} | {:<10}",
+                        let rate_str = if stats.tcp_packets == 0 {
+                            "N/A".to_string()
+                        } else {
+                            format!("{:.3}", syn_rate(&stats))
+                        };
+                        println!("{:<16} | {:<10} | {:<12} | {:<10} | {:<8} | {:<8} | {:<8} | {:<15} | {:<10} | {:<10} | {:<10} | {:<12}",
                             ip.to_string(),
                             stats.packets,
                             stats.bytes,
@@ -176,10 +225,12 @@ async fn main() -> anyhow::Result<()> {
                             stats.syn_packets,
                             stats.last_seen,
                             activity_level(&stats),
-                            protocol_profile(&stats)
+                            protocol_profile(&stats),
+                            rate_str,
+                            syn_behavior(&stats)
                         );
                     }
-                    println!("---------------------------------------------------------------------------------------------------------------------------------------------------");
+                    println!("---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------");
                 } else {
                     debug!("HOST_STATS map currently empty.");
                 }
