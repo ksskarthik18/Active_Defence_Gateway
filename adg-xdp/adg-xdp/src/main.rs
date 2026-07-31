@@ -131,6 +131,8 @@ async fn main() -> anyhow::Result<()> {
     let host_stats: HashMap<_, u32, HostStats> =
         HashMap::try_from(ebpf.map("HOST_STATS").ok_or_else(|| anyhow::anyhow!("HOST_STATS map not found"))?)?;
 
+    let trust_engine = TrustEngine::new();
+
     println!("Attached XDP program to {iface}. Monitoring HOST_STATS map...");
     let ctrl_c = signal::ctrl_c();
     tokio::pin!(ctrl_c);
@@ -159,7 +161,7 @@ async fn main() -> anyhow::Result<()> {
                         // Create HostProfile
                         let profile = HostProfiler::build(ip.into(), &stats, current_time);
                         // Compute TrustScore
-                        let trust = TrustEngine::compute(&profile);
+                        let trust = trust_engine.compute(&profile);
                         
                         // Push to trust store
                         {
