@@ -1,10 +1,16 @@
 use crate::profiler::{HostProfile, SynBehavior};
 
+// ===== Penalty Constants =====
+const MODERATE_SYN_PENALTY: i32 = 20;
+const AGGRESSIVE_SYN_PENALTY: i32 = 50;
+
+// ===== TrustScore =====
 pub struct TrustScore {
     pub score: u8,
+    pub syn_contribution: i32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TrustLevel {
     Trusted,
     Normal,
@@ -14,13 +20,12 @@ pub enum TrustLevel {
 
 impl std::fmt::Display for TrustLevel {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let s = match self {
-            TrustLevel::Trusted => "TRUSTED",
-            TrustLevel::Normal => "NORMAL",
-            TrustLevel::Suspicious => "SUSPICIOUS",
-            TrustLevel::Untrusted => "UNTRUSTED",
-        };
-        write!(f, "{}", s)
+        match self {
+            TrustLevel::Trusted => write!(f, "TRUSTED"),
+            TrustLevel::Normal => write!(f, "NORMAL"),
+            TrustLevel::Suspicious => write!(f, "SUSPICIOUS"),
+            TrustLevel::Untrusted => write!(f, "UNTRUSTED"),
+        }
     }
 }
 
@@ -35,51 +40,131 @@ impl TrustScore {
     }
 }
 
-pub trait TrustSignal {
-    fn evaluate(&self, profile: &HostProfile) -> i32;
-}
-
-const MODERATE_SYN_PENALTY: i32 = 20;
-const AGGRESSIVE_SYN_PENALTY: i32 = 50;
-
-pub struct SynSignal;
-
-impl TrustSignal for SynSignal {
-    fn evaluate(&self, profile: &HostProfile) -> i32 {
-        match profile.syn_behavior {
-            SynBehavior::Normal => 0,
-            SynBehavior::Moderate => -MODERATE_SYN_PENALTY,
-            SynBehavior::Aggressive => -AGGRESSIVE_SYN_PENALTY,
-            SynBehavior::Unknown => 0,
-        }
-    }
-}
-
-pub struct TrustEngine {
-    signals: Vec<Box<dyn TrustSignal>>,
-}
+// ===== TrustEngine =====
+pub struct TrustEngine;
 
 impl TrustEngine {
-    pub fn new() -> Self {
-        Self {
-            signals: vec![
-                Box::new(SynSignal),
-                // Future signals like PortDiversitySignal, ThreatIntelSignal go here
-            ],
-        }
-    }
-
-    pub fn compute(&self, profile: &HostProfile) -> TrustScore {
+    /// Computes trust score using SYN behavior analysis.
+    ///
+    /// High SYN ratios may indicate aggressive connection initiation,
+    /// such as scanning or connection-flood behaviour,
+    /// and therefore warrant a trust reduction.
+    pub fn compute(profile: &HostProfile) -> TrustScore {
         let mut trust: i32 = 100;
-        
-        for signal in &self.signals {
-            trust += signal.evaluate(profile);
+        let mut syn_contribution: i32 = 0;
+
+        match profile.syn_behavior {
+            SynBehavior::Normal => {}
+            SynBehavior::Moderate => {
+                syn_contribution = -MODERATE_SYN_PENALTY;
+                trust += syn_contribution;
+            }
+            SynBehavior::Aggressive => {
+                syn_contribution = -AGGRESSIVE_SYN_PENALTY;
+                trust += syn_contribution;
+            }
+            SynBehavior::Unknown => {}
         }
 
         trust = trust.clamp(0, 100);
 
         TrustScore {
             score: trust as u8,
+            syn_contribution,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::profiler::{ActivityLevel, HostProfile, ProtocolProfile, RecentActivity};
+
+    fn create_profile(syn: SynBehavior) -> HostProfile {
+        HostProfile {
+            ip: 0x0A000001,
+            packets: 1000,
+            bytes: 100000,
+            tcp: 100,
+            udp: 0,
+            icmp: 0,
+            syn: 5,
+            last_seen: 1,
+            activity: ActivityLevel::High,
+            protocol: ProtocolProfile::TcpDominant,
+            syn_behavior: syn,
+            recent_activity: RecentActivity::Active,
+        }
+    }
+
+    #[test]
+    fn test_normal_syn_full_trust() {
+        let profile = create_profile(SynBehavior::Normal);
+        let score = TrustEngine::compute(&profile);
+        assert_eq!(score.score, 100);
+        assert_eq!(score.syn_contribution, 0);
+        assert_eq!(score.level(), TrustLevel::Trusted);
+    }
+
+    #[test]
+    fn test_moderate_syn_deduction() {
+        let profile = create_profile(SynBehavior::Moderate);
+        let score = TrustEngine::compute(&profile);
+        assert_eq!(score.score, 80);
+        assert_eq!(score.syn_contribution, -20);
+        assert_eq!(score.level(), TrustLevel::Normal);
+    }
+
+    #[test]
+    fn test_aggressive_syn_deduction() {
+        let profile = create_profile(SynBehavior::Aggressive);
+        let score = TrustEngine::compute(&profile);
+        assert_eq!(score.score, 50);
+        assert_eq!(score.syn_contribution, -50);
+        assert_eq!(score.level(), TrustLevel::Suspicious);
+    }
+
+    #[test]
+    fn test_unknown_syn_no_penalty() {
+        let profile = create_profile(SynBehavior::Unknown);
+        let score = TrustEngine::compute(&profile);
+        assert_eq!(score.score, 100);
+        assert_eq!(score.syn_contribution, 0);
+    }
+
+    #[test]
+    fn test_high_activity_no_penalty() {
+        let mut profile = create_profile(SynBehavior::Normal);
+        profile.activity = ActivityLevel::High;
+        profile.packets = 1_000_000;
+        let score = TrustEngine::compute(&profile);
+        assert_eq!(score.score, 100, "High activity should not reduce trust");
+    }
+
+    #[test]
+    fn test_idle_no_penalty() {
+        let mut profile = create_profile(SynBehavior::Normal);
+        profile.activity = ActivityLevel::Idle;
+        profile.packets = 5;
+        let score = TrustEngine::compute(&profile);
+        assert_eq!(score.score, 100, "Idle hosts should not be penalized");
+    }
+
+    #[test]
+    fn test_udp_dominant_no_penalty() {
+        let mut profile = create_profile(SynBehavior::Normal);
+        profile.protocol = ProtocolProfile::UdpDominant;
+        profile.udp = 1000;
+        let score = TrustEngine::compute(&profile);
+        assert_eq!(score.score, 100, "UDP is legitimate (DNS, QUIC, VoIP)");
+    }
+
+    #[test]
+    fn test_icmp_dominant_no_penalty() {
+        let mut profile = create_profile(SynBehavior::Normal);
+        profile.protocol = ProtocolProfile::IcmpDominant;
+        profile.icmp = 500;
+        let score = TrustEngine::compute(&profile);
+        assert_eq!(score.score, 100, "ICMP is diagnostic, not malicious");
     }
 }

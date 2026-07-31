@@ -131,8 +131,6 @@ async fn main() -> anyhow::Result<()> {
     let host_stats: HashMap<_, u32, HostStats> =
         HashMap::try_from(ebpf.map("HOST_STATS").ok_or_else(|| anyhow::anyhow!("HOST_STATS map not found"))?)?;
 
-    let trust_engine = TrustEngine::new();
-
     println!("Attached XDP program to {iface}. Monitoring HOST_STATS map...");
     let ctrl_c = signal::ctrl_c();
     tokio::pin!(ctrl_c);
@@ -153,15 +151,15 @@ async fn main() -> anyhow::Result<()> {
                 }
                 if !entries.is_empty() {
                     entries.sort_by_key(|(_, stats)| std::cmp::Reverse(stats.packets));
-                    println!("\n-----------------------------------------------------------------------------------------------------------------------------------------");
-                    println!("{:<16} | {:<12} | {:<12} | {:<12} | {:<12} | {:<8} | {:<12}", "Host", "Activity", "Protocol", "SYN", "Recent", "Trust", "Level");
-                    println!("-----------------------------------------------------------------------------------------------------------------------------------------");
+                    println!("\n----------------------------------------------------------------------------------------------------------------------------------------------");
+                    println!("{:<16} | {:<12} | {:<12} | {:<12} | {:<12} | {:<8} | {:<10} | {:<12}", "Host", "Activity", "Protocol", "SYN", "Recent", "Trust", "SYN Pen.", "Level");
+                    println!("----------------------------------------------------------------------------------------------------------------------------------------------");
                     let current_time = get_ktime_ns();
                     for (ip, stats) in entries {
                         // Create HostProfile
                         let profile = HostProfiler::build(ip.into(), &stats, current_time);
                         // Compute TrustScore
-                        let trust = trust_engine.compute(&profile);
+                        let trust = TrustEngine::compute(&profile);
                         
                         // Push to trust store
                         {
@@ -169,17 +167,18 @@ async fn main() -> anyhow::Result<()> {
                             store.insert(ip.to_string(), trust.score);
                         }
                         
-                        println!("{:<16} | {:<12} | {:<12} | {:<12} | {:<12} | {:<8} | {:<12}",
+                        println!("{:<16} | {:<12} | {:<12} | {:<12} | {:<12} | {:<8} | {:<10} | {:<12}",
                             ip.to_string(),
                             profile.activity.to_string(),
                             profile.protocol.to_string(),
                             profile.syn_behavior.to_string(),
                             profile.recent_activity.to_string(),
                             trust.score,
+                            trust.syn_contribution,
                             trust.level().to_string()
                         );
                     }
-                    println!("-----------------------------------------------------------------------------------------------------------------------------------------");
+                    println!("----------------------------------------------------------------------------------------------------------------------------------------------");
                 } else {
                     debug!("HOST_STATS map currently empty.");
                 }
