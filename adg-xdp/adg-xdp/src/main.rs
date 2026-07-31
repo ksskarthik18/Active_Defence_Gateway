@@ -1,4 +1,4 @@
-use adg_xdp_common::HostStats;
+use adg_xdp_common::{HostStats, TrustEntry};
 use anyhow::Context as _;
 use aya::{
     maps::HashMap,
@@ -7,10 +7,8 @@ use aya::{
 use clap::Parser;
 #[rustfmt::skip]
 use log::{debug, warn};
-use std::{net::Ipv4Addr, time::Duration, sync::{Arc, RwLock}, collections::HashMap as StdHashMap, fs};
+use std::{net::Ipv4Addr, time::Duration};
 use tokio::signal;
-use tokio::net::UnixListener;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 #[derive(Debug, Parser)]
 struct Opt {
@@ -50,9 +48,7 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // This will include your eBPF object file as raw bytes at compile-time and load it at
-    // runtime. This approach is recommended for most real-world use cases. If you would
-    // like to specify the eBPF program at runtime rather than at compile-time, you can
-    // reach for `Bpf::load_file` instead.
+    // runtime.
     let mut ebpf = aya::Ebpf::load(aya::include_bytes_aligned!(concat!(
         env!("OUT_DIR"),
         "/adg-xdp"
@@ -74,53 +70,6 @@ async fn main() -> anyhow::Result<()> {
             });
         }
     }
-    
-    // Set up shared state for the Trust Engine Socket API
-    let trust_store = Arc::new(RwLock::new(StdHashMap::<String, u8>::new()));
-    
-    // Start Unix Domain Socket Server for OS-Ken Python controller
-    let socket_path = "/tmp/adg_trust.sock";
-    let _ = fs::remove_file(socket_path); // ignore error if it doesn't exist
-    
-    let listener = UnixListener::bind(socket_path).context("Failed to bind Unix Domain Socket")?;
-    let store_clone = trust_store.clone();
-    
-    tokio::spawn(async move {
-        println!("API Server listening at {}", socket_path);
-        loop {
-            match listener.accept().await {
-                Ok((mut socket, _addr)) => {
-                    let store = store_clone.clone();
-                    tokio::spawn(async move {
-                        let mut buf = vec![0; 1024];
-                        if let Ok(n) = socket.read(&mut buf).await {
-                            if n == 0 { return; }
-                            let request = String::from_utf8_lossy(&buf[..n]).trim().to_string();
-                            
-                            let response = if request.to_uppercase() == "ALL" {
-                                let map = store.read().unwrap();
-                                // simple json manually
-                                let items: Vec<String> = map.iter()
-                                    .map(|(ip, score)| format!("\"{}\": {}", ip, score))
-                                    .collect();
-                                format!("{{{}}}\n", items.join(", "))
-                            } else {
-                                // Request is an IP address
-                                let map = store.read().unwrap();
-                                let score = map.get(&request).copied().unwrap_or(100);
-                                format!("{}\n", score)
-                            };
-                            
-                            let _ = socket.write_all(response.as_bytes()).await;
-                        }
-                    });
-                }
-                Err(e) => {
-                    warn!("Unix socket accept failed: {}", e);
-                }
-            }
-        }
-    });
 
     let Opt { iface } = opt;
     let program: &mut Xdp = ebpf.program_mut("adg_xdp").unwrap().try_into()?;
@@ -129,9 +78,12 @@ async fn main() -> anyhow::Result<()> {
         .context("failed to attach the XDP program with default flags - try changing XdpFlags::default() to XdpFlags::SKB_MODE")?;
 
     let host_stats: HashMap<_, u32, HostStats> =
-        HashMap::try_from(ebpf.map("HOST_STATS").ok_or_else(|| anyhow::anyhow!("HOST_STATS map not found"))?)?;
+        HashMap::try_from(ebpf.take_map("HOST_STATS").ok_or_else(|| anyhow::anyhow!("HOST_STATS map not found"))?)?;
 
-    println!("Attached XDP program to {iface}. Monitoring HOST_STATS map...");
+    let mut host_trust: HashMap<_, u32, TrustEntry> =
+        HashMap::try_from(ebpf.take_map("HOST_TRUST").ok_or_else(|| anyhow::anyhow!("HOST_TRUST map not found"))?)?;
+
+    println!("Attached XDP program to {iface}. Monitoring HOST_STATS and populating HOST_TRUST map...");
     let ctrl_c = signal::ctrl_c();
     tokio::pin!(ctrl_c);
 
@@ -139,7 +91,6 @@ async fn main() -> anyhow::Result<()> {
         tokio::select! {
             _ = &mut ctrl_c => {
                 println!("\nReceived Ctrl-C, exiting...");
-                let _ = fs::remove_file(socket_path); // Cleanup socket
                 break;
             }
             _ = tokio::time::sleep(Duration::from_secs(2)) => {
@@ -161,10 +112,16 @@ async fn main() -> anyhow::Result<()> {
                         // Compute TrustScore
                         let trust = TrustEngine::compute(&profile);
                         
-                        // Push to trust store
-                        {
-                            let mut store = trust_store.write().unwrap();
-                            store.insert(ip.to_string(), trust.score);
+                        // Populate HOST_TRUST eBPF map
+                        let trust_entry = TrustEntry {
+                            score: trust.score,
+                            level: trust.level() as u8,
+                            version: 1,
+                            flags: 0,
+                        };
+                        let ip_u32: u32 = ip.into();
+                        if let Err(e) = host_trust.insert(ip_u32, trust_entry, 0) {
+                            warn!("Failed to update HOST_TRUST for IP {}: {}", ip, e);
                         }
                         
                         println!("{:<16} | {:<12} | {:<12} | {:<12} | {:<12} | {:<8} | {:<10} | {:<12}",

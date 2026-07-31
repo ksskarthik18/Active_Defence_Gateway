@@ -45,6 +45,18 @@ unsafe impl aya::Pod for HostStats {}
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
+pub struct TrustEntry {
+    pub score: u8,
+    pub level: u8,
+    pub version: u8,
+    pub flags: u8,
+}
+
+#[cfg(feature = "user")]
+unsafe impl aya::Pod for TrustEntry {}
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
 #[allow(dead_code)] // temporary 
 pub struct TcpHdr {
     pub src_port: u16,

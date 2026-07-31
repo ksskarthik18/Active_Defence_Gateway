@@ -3,18 +3,19 @@
 
 use adg_xdp_common::{
     EthHdr,
+    HostStats,
     Ipv4Hdr,
     TcpHdr,
-    HostStats,
+    TrustEntry,
     MAX_ENTRIES,
 };
 
 use aya_ebpf::{
     bindings::xdp_action,
+    helpers::bpf_ktime_get_ns,
     macros::{map, xdp},
     maps::HashMap,
     programs::XdpContext,
-    helpers::bpf_ktime_get_ns,
 };
 use aya_log_ebpf::info;
 
@@ -22,6 +23,10 @@ const TCP_SYN: u16 = 0x0002;
 
 #[map]
 static HOST_STATS: HashMap<u32, HostStats> =
+    HashMap::with_max_entries(MAX_ENTRIES, 0);
+
+#[map]
+static HOST_TRUST: HashMap<u32, TrustEntry> =
     HashMap::with_max_entries(MAX_ENTRIES, 0);
 
 #[xdp]
