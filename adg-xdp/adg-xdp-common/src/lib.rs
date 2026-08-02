@@ -36,6 +36,7 @@ pub struct HostStats {
     pub icmp_packets: u64,
 
     pub syn_packets: u64,
+    pub frag_packets: u64,
 
     pub last_seen: u64,
 }
@@ -57,7 +58,6 @@ unsafe impl aya::Pod for TrustEntry {}
 
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
-#[allow(dead_code)] // temporary 
 pub struct TcpHdr {
     pub src_port: u16,
     pub dst_port: u16,

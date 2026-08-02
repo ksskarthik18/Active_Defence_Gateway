@@ -118,6 +118,35 @@ fn syn_behavior(stats: &HostStats) -> SynBehavior {
 }
 
 #[derive(Debug)]
+pub enum FragBehavior {
+    Normal,
+    Anomalous,
+}
+
+impl std::fmt::Display for FragBehavior {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            FragBehavior::Normal => "NORMAL",
+            FragBehavior::Anomalous => "ANOMALOUS",
+        };
+        write!(f, "{}", s)
+    }
+}
+
+fn frag_behavior(stats: &HostStats) -> FragBehavior {
+    if stats.packets == 0 {
+        return FragBehavior::Normal;
+    }
+    let rate = stats.frag_packets as f64 / stats.packets as f64;
+    // Over 5% fragmented packets is highly suspicious on modern networks
+    if rate > 0.05 {
+        FragBehavior::Anomalous
+    } else {
+        FragBehavior::Normal
+    }
+}
+
+#[derive(Debug)]
 pub enum RecentActivity {
     Active,
     Recent,
@@ -148,7 +177,6 @@ fn activity_state(idle_ns: u64) -> RecentActivity {
 }
 
 #[derive(Debug)]
-#[allow(dead_code)]
 pub struct HostProfile {
     pub ip: u32,
     pub packets: u64,
@@ -157,10 +185,12 @@ pub struct HostProfile {
     pub udp: u64,
     pub icmp: u64,
     pub syn: u64,
+    pub frag: u64,
     pub last_seen: u64,
     pub activity: ActivityLevel,
     pub protocol: ProtocolProfile,
     pub syn_behavior: SynBehavior,
+    pub frag_behavior: FragBehavior,
     pub recent_activity: RecentActivity,
 }
 
@@ -177,10 +207,12 @@ impl HostProfiler {
             udp: stats.udp_packets,
             icmp: stats.icmp_packets,
             syn: stats.syn_packets,
+            frag: stats.frag_packets,
             last_seen: stats.last_seen,
             activity: activity_level(stats),
             protocol: protocol_profile(stats),
             syn_behavior: syn_behavior(stats),
+            frag_behavior: frag_behavior(stats),
             recent_activity: activity_state(idle_ns),
         }
     }
