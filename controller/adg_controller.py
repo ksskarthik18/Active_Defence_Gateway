@@ -73,7 +73,14 @@ class ADGController(app_manager.OSKenApp):
             in_port
         )
 
+        # Learn source MAC
         self.mac_to_port[dpid][src] = in_port
+
+        # Determine output port
+        if dst in self.mac_to_port[dpid]:
+            out_port = self.mac_to_port[dpid][dst]
+        else:
+            out_port = ofproto.OFPP_FLOOD
 
         ip_pkt = pkt.get_protocol(ipv4.ipv4)
         if ip_pkt:
@@ -104,28 +111,23 @@ class ADGController(app_manager.OSKenApp):
             # Install high priority drop flow, no PacketOut
             self.flow_installer.install_policy_flow(datapath, match, decision, msg.buffer_id)
             return
-        else:
-            # ALLOW, MIRROR, REDIRECT paths
-            if dst in self.mac_to_port[dpid]:
-                out_port = self.mac_to_port[dpid][dst]
-            else:
-                out_port = ofproto.OFPP_FLOOD
 
-            # Only install flow if we know the destination port
-            if out_port != ofproto.OFPP_FLOOD:
-                self.flow_installer.install_policy_flow(datapath, match, decision, msg.buffer_id, out_port=out_port)
+        # ALLOW, MIRROR, REDIRECT paths
+        # Only install flow if we know the destination port
+        if out_port != ofproto.OFPP_FLOOD:
+            self.flow_installer.install_policy_flow(datapath, match, decision, msg.buffer_id, out_port=out_port)
 
-            # Send current packet out
-            actions = [parser.OFPActionOutput(out_port)]
-            data = None
-            if msg.buffer_id == ofproto.OFP_NO_BUFFER:
-                data = msg.data
+        # Send current packet out
+        actions = [parser.OFPActionOutput(out_port)]
+        data = None
+        if msg.buffer_id == ofproto.OFP_NO_BUFFER:
+            data = msg.data
 
-            out = parser.OFPPacketOut(
-                datapath=datapath,
-                buffer_id=msg.buffer_id,
-                in_port=in_port,
-                actions=actions,
-                data=data
-            )
-            datapath.send_msg(out)
+        out = parser.OFPPacketOut(
+            datapath=datapath,
+            buffer_id=msg.buffer_id,
+            in_port=in_port,
+            actions=actions,
+            data=data
+        )
+        datapath.send_msg(out)

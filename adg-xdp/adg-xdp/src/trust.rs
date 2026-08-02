@@ -1,8 +1,9 @@
-use crate::profiler::{HostProfile, SynBehavior};
+use crate::profiler::{FragBehavior, HostProfile, SynBehavior};
 
 // ===== Penalty Constants =====
 const MODERATE_SYN_PENALTY: i32 = 20;
 const AGGRESSIVE_SYN_PENALTY: i32 = 50;
+const FRAGMENTATION_PENALTY: i32 = 85;
 
 // ===== TrustScore =====
 pub struct TrustScore {
@@ -55,6 +56,7 @@ impl TrustEngine {
         let mut syn_contribution: i32 = 0;
         let mut frag_contribution: i32 = 0;
 
+        // Security Signals - SYN Behavior
         match profile.syn_behavior {
             SynBehavior::Normal => {}
             SynBehavior::Moderate => {
@@ -68,10 +70,14 @@ impl TrustEngine {
             SynBehavior::Unknown => {}
         }
 
+        // Security Signals - Fragmentation
+        // Abnormal IP fragmentation is often associated with
+        // evasion techniques and fragmentation-based attacks.
+        // Apply a severe trust reduction.
         match profile.frag_behavior {
-            crate::profiler::FragBehavior::Normal => {}
-            crate::profiler::FragBehavior::Anomalous => {
-                frag_contribution = -85; // Highly suspicious
+            FragBehavior::Normal => {}
+            FragBehavior::Anomalous => {
+                frag_contribution = -FRAGMENTATION_PENALTY;
                 trust += frag_contribution;
             }
         }
@@ -97,6 +103,7 @@ mod tests {
             packets: 1000,
             bytes: 100000,
             tcp: 100,
+            frag: 0,
             udp: 0,
             icmp: 0,
             syn: 5,
@@ -104,7 +111,7 @@ mod tests {
             activity: ActivityLevel::High,
             protocol: ProtocolProfile::TcpDominant,
             syn_behavior: syn,
-            frag_behavior: crate::profiler::FragBehavior::Normal,
+            frag_behavior: FragBehavior::Normal,
             recent_activity: RecentActivity::Active,
         }
     }
@@ -183,7 +190,7 @@ mod tests {
     #[test]
     fn test_anomalous_fragmentation_deduction() {
         let mut profile = create_profile(SynBehavior::Normal);
-        profile.frag_behavior = crate::profiler::FragBehavior::Anomalous;
+        profile.frag_behavior = FragBehavior::Anomalous;
         let score = TrustEngine::compute(&profile);
         assert_eq!(score.score, 15);
         assert_eq!(score.frag_contribution, -85);

@@ -41,7 +41,7 @@ class FlowInstaller:
         elif action == Action.MIRROR:
             priority = 120
             idle_timeout = 60
-            if out_port:
+            if out_port is not None:
                 actions = [parser.OFPActionOutput(out_port)]
         elif action == Action.ALLOW:
             priority = 1
