@@ -17,25 +17,27 @@ class Action(Enum):
     REDIRECT = auto()    # Future Honeypot support
 
 
+class PolicyConfig:
+    ALLOW = 90
+    LOG = 70
+    MIRROR = 40
+    REDIRECT = 20
 
 class PolicyEngine:
-
-    def __init__(self):
-        self.blacklist = set()
-        self.whitelist = set()
-
-    def add_to_blacklist(self, mac):
-        self.blacklist.add(mac)
-
-    def remove_from_blacklist(self, mac):
-        self.blacklist.discard(mac)
-
-    def add_to_whitelist(self, mac):
-        self.whitelist.add(mac)
-
     def evaluate(self, trust: int) -> Action:
-        # Trust score < 30 is considered untrusted/malicious
-        if trust < 30:
+        if trust >= PolicyConfig.ALLOW:
+            return Action.ALLOW
+            
+        elif trust >= PolicyConfig.LOG:
+            # For 70 <= trust < 90, log internally but ALLOW
+            # In a real implementation this would emit a log event.
+            return Action.ALLOW
+            
+        elif trust >= PolicyConfig.MIRROR:
+            return Action.MIRROR
+            
+        elif trust >= PolicyConfig.REDIRECT:
+            return Action.REDIRECT
+            
+        else:
             return Action.DROP
-        
-        return Action.ALLOW
