@@ -66,3 +66,47 @@ class FlowInstaller:
         mod = parser.OFPFlowMod(**kwargs)
         datapath.send_msg(mod)
         self.logger.debug("Installed flow: Priority=%s, Action=%s", priority, action.name)
+
+    def install_ip_policy_flow(self, datapath, ip, action):
+        """Installs or removes a global policy flow matching only ipv4_src"""
+        ofproto = datapath.ofproto
+        parser = datapath.ofproto_parser
+        
+        match = parser.OFPMatch(eth_type=0x0800, ipv4_src=ip)
+        
+        if action == Action.ALLOW:
+            # Delete any existing restrictive policy flows for this IP
+            mod = parser.OFPFlowMod(
+                datapath=datapath,
+                command=ofproto.OFPFC_DELETE,
+                out_port=ofproto.OFPP_ANY,
+                out_group=ofproto.OFPG_ANY,
+                match=match
+            )
+            datapath.send_msg(mod)
+            self.logger.debug("Deleted policy flows for IP=%s", ip)
+            return
+
+        priority = 0
+        actions = []
+
+        if action == Action.DROP:
+            priority = 200
+            # No actions == drop
+        elif action == Action.REDIRECT:
+            priority = 150
+            # Placeholder for future redirect actions
+        elif action == Action.MIRROR:
+            priority = 120
+            # Placeholder for future mirror actions
+            
+        inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
+        
+        mod = parser.OFPFlowMod(
+            datapath=datapath,
+            priority=priority,
+            match=match,
+            instructions=inst
+        )
+        datapath.send_msg(mod)
+        self.logger.debug("Installed IP policy flow: IP=%s, Priority=%s, Action=%s", ip, priority, action.name)

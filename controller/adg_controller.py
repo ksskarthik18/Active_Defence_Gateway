@@ -9,6 +9,7 @@ from os_ken.lib.packet import ipv4
 from policy import Action, PolicyEngine
 from trust import TrustStore
 from flow import FlowInstaller
+from detector import TrustChangeDetector
 from utils import get_logger, debug_packet
 
 logger = get_logger("ADG")
@@ -24,10 +25,13 @@ class ADGController(app_manager.OSKenApp):
         self.policy_engine = PolicyEngine()
         self.trust_store = TrustStore()
         self.flow_installer = FlowInstaller(self.logger)
+        self.datapaths = {}
+        self.detector = TrustChangeDetector(self)
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
         datapath = ev.msg.datapath
+        self.datapaths[datapath.id] = datapath
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
 
@@ -74,6 +78,10 @@ class ADGController(app_manager.OSKenApp):
         ip_pkt = pkt.get_protocol(ipv4.ipv4)
         if ip_pkt:
             src_ip = ip_pkt.src
+            
+            # Register with detector for background monitoring
+            self.detector.register_host(src_ip)
+            
             trust = self.trust_store.get(src_ip)
             decision = self.policy_engine.evaluate(trust)
             
