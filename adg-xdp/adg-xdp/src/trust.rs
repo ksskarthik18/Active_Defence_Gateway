@@ -8,6 +8,7 @@ const AGGRESSIVE_SYN_PENALTY: i32 = 50;
 pub struct TrustScore {
     pub score: u8,
     pub syn_contribution: i32,
+    pub frag_contribution: i32,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -52,6 +53,7 @@ impl TrustEngine {
     pub fn compute(profile: &HostProfile) -> TrustScore {
         let mut trust: i32 = 100;
         let mut syn_contribution: i32 = 0;
+        let mut frag_contribution: i32 = 0;
 
         match profile.syn_behavior {
             SynBehavior::Normal => {}
@@ -66,11 +68,20 @@ impl TrustEngine {
             SynBehavior::Unknown => {}
         }
 
+        match profile.frag_behavior {
+            crate::profiler::FragBehavior::Normal => {}
+            crate::profiler::FragBehavior::Anomalous => {
+                frag_contribution = -85; // Highly suspicious
+                trust += frag_contribution;
+            }
+        }
+
         trust = trust.clamp(0, 100);
 
         TrustScore {
             score: trust as u8,
             syn_contribution,
+            frag_contribution,
         }
     }
 }
@@ -93,6 +104,7 @@ mod tests {
             activity: ActivityLevel::High,
             protocol: ProtocolProfile::TcpDominant,
             syn_behavior: syn,
+            frag_behavior: crate::profiler::FragBehavior::Normal,
             recent_activity: RecentActivity::Active,
         }
     }
@@ -166,5 +178,15 @@ mod tests {
         profile.icmp = 500;
         let score = TrustEngine::compute(&profile);
         assert_eq!(score.score, 100, "ICMP is diagnostic, not malicious");
+    }
+
+    #[test]
+    fn test_anomalous_fragmentation_deduction() {
+        let mut profile = create_profile(SynBehavior::Normal);
+        profile.frag_behavior = crate::profiler::FragBehavior::Anomalous;
+        let score = TrustEngine::compute(&profile);
+        assert_eq!(score.score, 15);
+        assert_eq!(score.frag_contribution, -85);
+        assert_eq!(score.level(), TrustLevel::Untrusted);
     }
 }

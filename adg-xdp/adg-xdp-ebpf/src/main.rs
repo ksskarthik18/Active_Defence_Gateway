@@ -71,6 +71,10 @@ fn try_adg_xdp(ctx: XdpContext) -> Result<u32, ()> {
     let src_addr = u32::from_be(ipv4.src_addr);
     let pkt_len = u16::from_be(ipv4.tot_len) as u64;
 
+    // Detect fragmentation: lower 13 bits are offset, bit 13 is MF flag
+    let frag_val = u16::from_be(ipv4.frag_off);
+    let is_frag = if (frag_val & 0x3FFF) != 0 { 1 } else { 0 };
+
     let mut is_syn = 0;
     if ipv4.protocol == 6 {
         let ip_header_len = ((ipv4.version_ihl & 0x0F) * 4) as usize;
@@ -101,6 +105,7 @@ fn try_adg_xdp(ctx: XdpContext) -> Result<u32, ()> {
                 17 => (*stats_ptr).udp_packets += 1,
                 _ => {}
             }
+            (*stats_ptr).frag_packets += is_frag;
             (*stats_ptr).last_seen = bpf_ktime_get_ns();
         }
     } else {
@@ -111,6 +116,7 @@ fn try_adg_xdp(ctx: XdpContext) -> Result<u32, ()> {
             udp_packets: if ipv4.protocol == 17 { 1 } else { 0 },
             icmp_packets: if ipv4.protocol == 1 { 1 } else { 0 },
             syn_packets: is_syn,
+            frag_packets: is_frag,
             last_seen: unsafe { bpf_ktime_get_ns() },
         };
         let _ = HOST_STATS.insert(&src_addr, &initial, 0);
