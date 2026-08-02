@@ -8,6 +8,7 @@ from os_ken.lib.packet import ethernet
 from os_ken.lib.packet import ipv4
 from policy import Action, PolicyEngine
 from trust import TrustStore
+from flow import FlowInstaller
 from utils import get_logger, debug_packet
 
 logger = get_logger("ADG")
@@ -22,6 +23,7 @@ class ADGController(app_manager.OSKenApp):
         self.mac_to_port = {}
         self.policy_engine = PolicyEngine()
         self.trust_store = TrustStore()
+        self.flow_installer = FlowInstaller(self.logger)
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
@@ -30,44 +32,13 @@ class ADGController(app_manager.OSKenApp):
         parser = datapath.ofproto_parser
 
         match = parser.OFPMatch()
-
         actions = [
             parser.OFPActionOutput(
                 ofproto.OFPP_CONTROLLER,
                 ofproto.OFPCML_NO_BUFFER
             )
         ]
-
-        self.add_flow(datapath, 0, match, actions)
-
-    def add_flow(self, datapath, priority, match, actions, buffer_id=None):
-        ofproto = datapath.ofproto
-        parser = datapath.ofproto_parser
-
-        inst = [
-            parser.OFPInstructionActions(
-                ofproto.OFPIT_APPLY_ACTIONS,
-                actions
-            )
-        ]
-
-        if buffer_id is not None and buffer_id != ofproto.OFP_NO_BUFFER:
-            mod = parser.OFPFlowMod(
-                datapath=datapath,
-                buffer_id=buffer_id,
-                priority=priority,
-                match=match,
-                instructions=inst
-            )
-        else:
-            mod = parser.OFPFlowMod(
-                datapath=datapath,
-                priority=priority,
-                match=match,
-                instructions=inst
-            )
-
-        datapath.send_msg(mod)
+        self.flow_installer.install_default_flow(datapath, match, actions)
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def packet_in_handler(self, ev):
@@ -104,66 +75,49 @@ class ADGController(app_manager.OSKenApp):
         if ip_pkt:
             src_ip = ip_pkt.src
             trust = self.trust_store.get(src_ip)
-            
-            print(f"Host {src_ip}")
-            print(f"Trust = {trust}")
-            
             decision = self.policy_engine.evaluate(trust)
-            print(f"Decision = {decision.name}\n")
+            
+            priority = 1
+            if decision == Action.DROP: priority = 200
+            elif decision == Action.REDIRECT: priority = 150
+            elif decision == Action.MIRROR: priority = 120
+            
+            print("[POLICY]")
+            print(f"Host : {src_ip}")
+            print(f"Trust : {trust}")
+            print(f"Decision : {decision.name}")
+            print(f"Priority : {priority}\n")
         else:
             decision = Action.ALLOW
 
-        self.logger.info(
-            "Policy=%s SRC=%s DST=%s",
-            decision.name,
-            src,
-            dst
-        )
+        match = parser.OFPMatch(in_port=in_port, eth_src=src, eth_dst=dst)
 
         if decision == Action.DROP:
+            # Install high priority drop flow, no PacketOut
+            self.flow_installer.install_policy_flow(datapath, match, decision, msg.buffer_id)
             return
         else:
+            # ALLOW, MIRROR, REDIRECT paths
             if dst in self.mac_to_port[dpid]:
                 out_port = self.mac_to_port[dpid][dst]
             else:
                 out_port = ofproto.OFPP_FLOOD
 
-        actions = [parser.OFPActionOutput(out_port)]
+            # Only install flow if we know the destination port
+            if out_port != ofproto.OFPP_FLOOD:
+                self.flow_installer.install_policy_flow(datapath, match, decision, msg.buffer_id, out_port=out_port)
 
-        if out_port != ofproto.OFPP_FLOOD:
-            match = parser.OFPMatch(
+            # Send current packet out
+            actions = [parser.OFPActionOutput(out_port)]
+            data = None
+            if msg.buffer_id == ofproto.OFP_NO_BUFFER:
+                data = msg.data
+
+            out = parser.OFPPacketOut(
+                datapath=datapath,
+                buffer_id=msg.buffer_id,
                 in_port=in_port,
-                eth_src=src,
-                eth_dst=dst
+                actions=actions,
+                data=data
             )
-
-            if msg.buffer_id != ofproto.OFP_NO_BUFFER:
-                self.add_flow(
-                    datapath,
-                    1,
-                    match,
-                    actions,
-                    msg.buffer_id
-                )
-                return
-            else:
-                self.add_flow(
-                    datapath,
-                    1,
-                    match,
-                    actions
-                )
-
-        data = None
-        if msg.buffer_id == ofproto.OFP_NO_BUFFER:
-            data = msg.data
-
-        out = parser.OFPPacketOut(
-            datapath=datapath,
-            buffer_id=msg.buffer_id,
-            in_port=in_port,
-            actions=actions,
-            data=data
-        )
-
-        datapath.send_msg(out)
+            datapath.send_msg(out)
