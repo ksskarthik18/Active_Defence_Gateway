@@ -80,8 +80,13 @@ async fn main() -> anyhow::Result<()> {
     let host_stats: HashMap<_, u32, HostStats> =
         HashMap::try_from(ebpf.take_map("HOST_STATS").ok_or_else(|| anyhow::anyhow!("HOST_STATS map not found"))?)?;
 
-    let mut host_trust: HashMap<_, u32, TrustEntry> =
-        HashMap::try_from(ebpf.take_map("HOST_TRUST").ok_or_else(|| anyhow::anyhow!("HOST_TRUST map not found"))?)?;
+    let host_trust_map = ebpf.take_map("HOST_TRUST").ok_or_else(|| anyhow::anyhow!("HOST_TRUST map not found"))?;
+    let pin_path = "/sys/fs/bpf/HOST_TRUST";
+    if std::path::Path::new(pin_path).exists() {
+        let _ = std::fs::remove_file(pin_path);
+    }
+    host_trust_map.pin(pin_path).context("Failed to pin HOST_TRUST map")?;
+    let mut host_trust: HashMap<_, u32, TrustEntry> = HashMap::try_from(host_trust_map)?;
 
     println!("Attached XDP program to {iface}. Monitoring HOST_STATS and populating HOST_TRUST map...");
     let ctrl_c = signal::ctrl_c();

@@ -5,7 +5,9 @@ from os_ken.controller.handler import set_ev_cls
 from os_ken.ofproto import ofproto_v1_3
 from os_ken.lib.packet import packet
 from os_ken.lib.packet import ethernet
+from os_ken.lib.packet import ipv4
 from policy import Action, PolicyEngine
+from trust import TrustStore
 from utils import get_logger, debug_packet
 
 logger = get_logger("ADG")
@@ -19,6 +21,7 @@ class ADGController(app_manager.OSKenApp):
         super(ADGController, self).__init__(*args, **kwargs)
         self.mac_to_port = {}
         self.policy_engine = PolicyEngine()
+        self.trust_store = TrustStore()
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
@@ -97,7 +100,18 @@ class ADGController(app_manager.OSKenApp):
 
         self.mac_to_port[dpid][src] = in_port
 
-        decision = self.policy_engine.evaluate(src, dst, in_port)
+        ip_pkt = pkt.get_protocol(ipv4.ipv4)
+        if ip_pkt:
+            src_ip = ip_pkt.src
+            trust = self.trust_store.get(src_ip)
+            
+            print(f"Host {src_ip}")
+            print(f"Trust = {trust}")
+            
+            decision = self.policy_engine.evaluate(trust)
+            print(f"Decision = {decision.name}\n")
+        else:
+            decision = Action.ALLOW
 
         self.logger.info(
             "Policy=%s SRC=%s DST=%s",

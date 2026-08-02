@@ -33,12 +33,9 @@ class PolicyEngine:
     def add_to_whitelist(self, mac):
         self.whitelist.add(mac)
 
-    def evaluate(self, src, dst, in_port):
-
-        # Highest priority
-        if src in self.blacklist:
+    def evaluate(self, trust: int) -> Action:
+        # Trust score < 30 is considered untrusted/malicious
+        if trust < 30:
             return Action.DROP
-
-        # Future rules go here
-
+        
         return Action.ALLOW
