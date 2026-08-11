@@ -6,9 +6,9 @@ import os
 from datetime import datetime
 
 # Add controller to path to reuse existing logic
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../controller')))
-from trust import TrustStore
-from policy import PolicyEngine
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../controller')))
+from trust import TrustStore  # type: ignore[import-not-found]
+from policy import PolicyEngine  # type: ignore[import-not-found]
 
 def get_flows(switch="s1"):
     try:
