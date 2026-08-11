@@ -98,7 +98,13 @@ class FlowInstaller:
             # Placeholder for future redirect actions
         elif action == Action.MIRROR:
             priority = 120
-            # Placeholder for future mirror actions
+            # Forward traffic normally AND send a copy to controller for inspection.
+            # OFPP_NORMAL: let OVS handle L2 forwarding as usual.
+            # OFPP_CONTROLLER: duplicate a packet header copy (128 bytes) for the SDN controller.
+            actions = [
+                parser.OFPActionOutput(ofproto.OFPP_NORMAL),
+                parser.OFPActionOutput(ofproto.OFPP_CONTROLLER, 128),
+            ]
             
         inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
         
@@ -106,7 +112,8 @@ class FlowInstaller:
             datapath=datapath,
             priority=priority,
             match=match,
-            instructions=inst
+            instructions=inst,
+            idle_timeout=60
         )
         datapath.send_msg(mod)
         self.logger.debug("Installed IP policy flow: IP=%s, Priority=%s, Action=%s", ip, priority, action.name)

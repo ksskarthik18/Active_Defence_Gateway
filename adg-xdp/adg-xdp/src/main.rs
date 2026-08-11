@@ -7,7 +7,7 @@ use aya::{
 use clap::Parser;
 #[rustfmt::skip]
 use log::{debug, warn};
-use std::{net::Ipv4Addr, time::Duration};
+use std::{collections, net::Ipv4Addr, time::Duration};
 use tokio::signal;
 
 #[derive(Debug, Parser)]
@@ -28,6 +28,23 @@ fn get_ktime_ns() -> u64 {
         libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut ts);
     }
     (ts.tv_sec as u64) * 1_000_000_000 + (ts.tv_nsec as u64)
+}
+
+/// Compute the delta between the current and previous HostStats snapshots.
+/// This gives us a windowed view of activity over the last polling interval,
+/// rather than cumulative all-time counters.
+fn compute_delta(current: &HostStats, previous: &HostStats) -> HostStats {
+    HostStats {
+        packets: current.packets.saturating_sub(previous.packets),
+        bytes: current.bytes.saturating_sub(previous.bytes),
+        tcp_packets: current.tcp_packets.saturating_sub(previous.tcp_packets),
+        udp_packets: current.udp_packets.saturating_sub(previous.udp_packets),
+        icmp_packets: current.icmp_packets.saturating_sub(previous.icmp_packets),
+        syn_packets: current.syn_packets.saturating_sub(previous.syn_packets),
+        frag_packets: current.frag_packets.saturating_sub(previous.frag_packets),
+        // Preserve last_seen from the current reading so idle detection works correctly
+        last_seen: current.last_seen,
+    }
 }
 
 #[tokio::main]
@@ -88,6 +105,9 @@ async fn main() -> anyhow::Result<()> {
     host_trust_map.pin(pin_path).context("Failed to pin HOST_TRUST map")?;
     let mut host_trust: HashMap<_, u32, TrustEntry> = HashMap::try_from(host_trust_map)?;
 
+    // Track previous snapshots for windowed delta computation
+    let mut prev_snapshots: collections::HashMap<Ipv4Addr, HostStats> = collections::HashMap::new();
+
     println!("Attached XDP program to {iface}. Monitoring HOST_STATS and populating HOST_TRUST map...");
     let ctrl_c = signal::ctrl_c();
     tokio::pin!(ctrl_c);
@@ -111,9 +131,20 @@ async fn main() -> anyhow::Result<()> {
                     println!("{:<16} | {:<12} | {:<12} | {:<12} | {:<10} | {:<12} | {:<8} | {:<10} | {:<10} | {:<12}", "Host", "Activity", "Protocol", "SYN", "Frag", "Recent", "Trust", "SYN Pen.", "Frag Pen.", "Level");
                     println!("-----------------------------------------------------------------------------------------------------------------------------------------------------------------");
                     let current_time = get_ktime_ns();
-                    for (ip, stats) in entries {
-                        // Create HostProfile
-                        let profile = HostProfiler::build(ip.into(), &stats, current_time);
+                    for (ip, stats) in &entries {
+                        // Compute windowed delta stats for behavioral classification.
+                        // This ensures the profiler evaluates only recent activity,
+                        // enabling natural trust recovery when malicious traffic stops.
+                        let zero_stats = HostStats {
+                            packets: 0, bytes: 0,
+                            tcp_packets: 0, udp_packets: 0, icmp_packets: 0,
+                            syn_packets: 0, frag_packets: 0, last_seen: 0,
+                        };
+                        let prev = prev_snapshots.get(ip).unwrap_or(&zero_stats);
+                        let delta = compute_delta(stats, prev);
+
+                        // Create HostProfile from windowed delta
+                        let profile = HostProfiler::build((*ip).into(), &delta, current_time);
                         // Compute TrustScore
                         let trust = TrustEngine::compute(&profile);
                         
@@ -124,7 +155,7 @@ async fn main() -> anyhow::Result<()> {
                             version: 1,
                             flags: 0,
                         };
-                        let ip_u32: u32 = ip.into();
+                        let ip_u32: u32 = (*ip).into();
                         if let Err(e) = host_trust.insert(ip_u32, trust_entry, 0) {
                             warn!("Failed to update HOST_TRUST for IP {}: {}", ip, e);
                         }
@@ -143,6 +174,11 @@ async fn main() -> anyhow::Result<()> {
                         );
                     }
                     println!("-----------------------------------------------------------------------------------------------------------------------------------------------------------------");
+
+                    // Update previous snapshots for next window
+                    for (ip, stats) in entries {
+                        prev_snapshots.insert(ip, stats);
+                    }
                 } else {
                     debug!("HOST_STATS map currently empty.");
                 }
