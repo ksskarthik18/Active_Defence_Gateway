@@ -17,6 +17,7 @@ struct Opt {
 }
 
 mod profiler;
+mod telemetry_extensions;
 mod trust;
 
 use profiler::HostProfiler;
