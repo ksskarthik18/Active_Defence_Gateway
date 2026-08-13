@@ -1,0 +1,811 @@
+\documentclass[conference]{IEEEtran}
+
+% ================= Packages =================
+
+\usepackage{graphicx}
+\usepackage{amsmath}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{booktabs}
+\usepackage[hidelinks]{hyperref}
+\usepackage{cite}
+
+% ================= Title =================
+
+\title{
+ADG: An eBPF-Assisted Adaptive Trust Enforcement Framework
+for Software Defined Network Security
+}
+
+% ================= Author =================
+
+\author{
+\IEEEauthorblockN{
+K V L Narasimha Kushal\IEEEauthorrefmark{1}*,
+Hari Prasath\IEEEauthorrefmark{1},
+K S S Karthik\IEEEauthorrefmark{1},
+Anuj A\IEEEauthorrefmark{1},
+Harish J\IEEEauthorrefmark{1}
+}
+\IEEEauthorblockA{\IEEEauthorrefmark{1}
+Department of Computer Science and Engineering\\
+Amrita Vishwa Vidyapeetham\\
+\{cb.sc.u4cse23525, cb.sc.u4cse23515, cb.sc.u4cse23562, cb.sc.u4cse23507, cb.sc.u4cse23517\}@cb.students.amrita.edu
+}
+\thanks{*Corresponding author: Dr N Radhika}
+}
+
+\begin{document}
+
+\maketitle
+
+% ============================================================
+% Abstract
+% ============================================================
+
+\begin{abstract}
+Modern network environments are dynamic, necessitating security mechanisms capable of adapting to continuously changing host behaviour. Traditional network security paradigms, which predominantly rely on static policies, are insufficient against evolving threats such as reconnaissance, scanning, and automated attack sequences.
+
+This paper presents the design and implementation of the Active Defense Gateway (ADG), an adaptive security framework that integrates kernel-level telemetry collection via eBPF/XDP with Software Defined Networking (SDN) policy enforcement.
+
+The proposed architecture introduces a behavioural trust computation layer situated between network observation and policy enforcement. Packet-level statistics are extracted within the Linux kernel using an XDP program and exported via eBPF maps. A Rust-based trust engine translates this host telemetry into structured behavioural profiles, computing a dynamic trust score derived from security-relevant signals, including TCP SYN behaviour and IP fragmentation anomalies.
+
+The evaluated trust state is subsequently propagated to an SDN controller through pinned eBPF maps. The controller uses these trust values to dynamically select and install OpenFlow enforcement policies corresponding to the evaluated security state of each host.
+
+A prototype implementation utilizing Mininet, Open vSwitch, OS-Ken, Rust, and Aya-eBPF demonstrates a closed-loop security pipeline—from low-level packet observation to adaptive SDN enforcement.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Software Defined Networking, eBPF, XDP, Zero Trust,
+Network Security, Behavioural Analysis, OpenFlow,
+Adaptive Security
+\end{IEEEkeywords}
+
+% ============================================================
+% Introduction
+% ============================================================
+
+\section{Introduction}
+
+Modern computer networks operate within dynamic environments where hosts, applications, and communication patterns continuously fluctuate. Traditional security methodologies, relying primarily on static access control lists, fixed firewall topologies, and rigid trust boundaries, often fail to adapt with the rapidity required to mitigate emerging threats.
+
+Software Defined Networking (SDN) introduced a programmable networking paradigm by decoupling the control plane from the data forwarding plane. This architecture allows logically centralized controllers to dynamically dictate network behaviour. The OpenFlow protocol, introduced by McKeown et al.~\cite{mckeown2008openflow}, enabled programmable flow-level control over network switches.
+
+While SDN provides inherent flexibility, conventional SDN-based security mechanisms largely depend on manually configured rules or reactive external intrusion detection systems. Consequently, the controller generally acts in a reactive capacity following alert generation, rather than proactively maintaining a continuous behavioural understanding of network entities.
+
+Simultaneously, recent advancements in kernel-level programmability through extended Berkeley Packet Filter (eBPF) and the eXpress Data Path (XDP) have enabled high-performance packet inspection directly within the Linux networking stack. These technologies empower security applications to monitor network behaviour with reduced computational overhead compared to traditional user-space packet capture techniques~\cite{miano2023sketching}.
+
+Furthermore, Zero Trust security principles challenge conventional perimeter defences by emphasizing continuous verification and adaptive trust assessments, shifting away from implicit trust based merely on network localization or static identity~\cite{nist800207}.
+
+Motivated by the convergence of these paradigms, this work introduces ADG, an adaptive security framework synthesizing:
+\begin{itemize}
+\item Kernel-level telemetry collection via eBPF/XDP.
+\item Real-time behavioural host profiling.
+\item Dynamic, algorithm-driven trust computation.
+\item Trust-aware SDN policy enforcement.
+\end{itemize}
+
+The primary contribution of this research is the integration of these individual components into a closed-loop adaptive enforcement architecture:
+\begin{equation}
+\text{Traffic} \rightarrow \text{Telemetry} \rightarrow \text{Profiling} \rightarrow \text{Trust} \rightarrow \text{Policy} \rightarrow \text{Enforcement}
+\end{equation}
+
+The current implementation focuses on the core adaptive trust pipeline. Future extensions aim to incorporate multi-controller coordination, automated deception strategies, and quantitative evaluation of performance overheads.
+
+% ============================================================
+% Background
+% ============================================================
+
+\section{Background}
+
+\subsection{Software Defined Networking}
+Software Defined Networking separates network control logic from packet forwarding operations. In legacy environments, control logic is embedded within individual devices, rendering large-scale policy modifications difficult. 
+
+SDN introduces a centralized controller tasked with computing forwarding decisions, while subordinate switches execute packet forwarding. The OpenFlow protocol standardizes communication between the control and forwarding planes~\cite{mckeown2008openflow}. 
+
+The ADG architecture leverages SDN as its enforcement layer, ensuring that dynamic security decisions formulated by the overarching trust engine can modify network forwarding behaviour.
+
+\subsection{eBPF and XDP}
+eBPF extends the capabilities of the Linux kernel by allowing sandboxed, user-defined programs to execute securely within kernel contexts without requiring kernel source modifications or module loading. Its diverse applications encompass system tracing, comprehensive observability, advanced networking, and security monitoring~\cite{ebpf}.
+
+The XDP program provides an early packet-processing hook in the Linux network receive path, allowing packets to be inspected and acted upon before they traverse the majority of the conventional networking stack.
+
+XDP is particularly advantageous for security telemetry gathering as it provides:
+\begin{itemize}
+\item Early packet visibility in the receive path.
+\item Low processing overhead compared to user-space capture.
+\item Kernel-level packet filtering capabilities.
+\item Asynchronous communication via BPF maps.
+\end{itemize}
+
+\subsection{Zero Trust Security}
+Traditional network security models frequently operate under the assumption that entities residing inside a delineated network boundary are inherently trustworthy. The Zero Trust architecture explicitly refutes this assumption, mandating the continuous verification of all users, devices, and applications.
+
+The NIST Zero Trust Architecture framework advocates for the continuous evaluation of an entity's security posture alongside adaptive access determinations~\cite{nist800207}. ADG operationalizes this principle by deriving trust metrics from the empirically observed behavioural characteristics of network hosts.
+
+% ============================================================
+% Related Work
+% ============================================================
+
+\section{Related Work}
+
+Intrusion detection research has a long history of exploring behavioural analysis to identify anomalous system activity. Denning established one of the foundational intrusion detection models, proposing that malicious behaviour could be identified via statistical deviations from normal activity baselines~\cite{denning1987ids}.
+
+Subsequent network anomaly detection techniques have analyzed traffic parameters such as packet arrival rates, flow durations, and protocol distribution patterns. Mirkovic and Reiher provided a comprehensive taxonomy of distributed denial-of-service (DDoS) attacks and corresponding mitigation strategies, highlighting connection-oriented attack indicators like SYN flooding~\cite{mirkovic2004survey}.
+
+Existing studies have demonstrated eBPF/XDP for high-performance telemetry, traffic filtering, DDoS mitigation, and programmable network functions~\cite{hoiland2018express, miano2023sketching, tolay2025ebpf}. However, these works address different portions of the observation-to-enforcement pipeline. Many focus primarily on localized in-kernel packet filtering or isolated detection without integrating telemetry-derived intelligence directly into automated SDN enforcement.
+
+ADG combines:
+\begin{enumerate}
+\item In-kernel behavioural observation using eBPF/XDP.
+\item Algorithmic trust computation driven by host activity profiles.
+\item Integration with SDN policy enforcement engines via shared BPF maps.
+\end{enumerate}
+
+In contrast to static security policies, ADG constructs a feedback-driven mechanism where an entity's evaluated trust state influences OpenFlow forwarding decisions.
+
+% ============================================================
+% ADG Architecture
+% ============================================================
+
+\section{ADG Architecture}
+
+The Active Defense Gateway (ADG) is structured as a closed-loop adaptive security architecture, bridging low-level packet observation with centralized SDN enforcement.
+
+The system architecture is categorized into three primary functional planes:
+\begin{enumerate}
+\item Observation Plane
+\item Trust Computation Plane
+\item Enforcement Plane
+\end{enumerate}
+
+The complete architecture is depicted in Fig.~\ref{fig:adg_architecture}.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{Images/adg_architectureDiagram.png}
+\caption{ADG closed-loop adaptive trust enforcement architecture showing the three-plane security model: the XDP observation hook, the Aya/OS-KEN control plane, and the Open vSwitch data plane.}
+\label{fig:adg_architecture}
+\end{figure}
+
+% ============================================================
+% Observation Plane
+% ============================================================
+
+\subsection{Observation Plane}
+
+The observation plane is responsible for aggregating network telemetry across active packet flows. 
+
+Unlike traditional user-space monitoring solutions, ADG executes packet observation using an eBPF/XDP program attached at the network interface level. The XDP program intercepts packets early in the network receive path, enabling feature extraction before standard kernel processing.
+
+The current prototype extracts the features detailed in Table~\ref{tab:features}.
+
+\begin{table}[h]
+\centering
+\caption{Collected Host Telemetry Features.}
+\label{tab:features}
+\begin{tabular}{ll}
+\toprule
+Feature & Description \\
+\midrule
+Source IP & Identifies communicating host \\
+Packet Count & Total observed packets \\
+Byte Count & Total traffic volume \\
+TCP Count & TCP traffic frequency \\
+UDP Count & UDP traffic frequency \\
+ICMP Count & ICMP traffic frequency \\
+SYN Count & TCP connection initiation behaviour \\
+Fragment Count & IP fragmentation anomalies \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+These empirical statistics are aggregated and stored within an eBPF HashMap designated as \texttt{HOST\_STATS}. This map serves as the primary kernel-to-userspace communication bridge, allowing the Rust-based userspace component to poll host telemetry asynchronously.
+
+% ============================================================
+% Trust Computation Plane
+% ============================================================
+
+\subsection{Trust Computation Plane}
+
+The trust computation plane translates raw packet statistics into a contextualized behavioural representation of each network host. The Rust-based implementation is bifurcated into two core modules: the Host Profiler and the Trust Engine.
+
+\subsubsection{Host Profiling}
+The \texttt{HostProfiler} module abstracts low-level telemetry metrics into a standardized behavioural profile. 
+
+The resulting \texttt{HostProfile} structure encompasses:
+\begin{itemize}
+\item Overall activity classification.
+\item Protocol dominance categorization.
+\item TCP SYN behaviour classification.
+\item IP fragmentation behaviour analysis.
+\item Temporal activity states.
+\end{itemize}
+
+Table~\ref{tab:activity} defines the activity classification thresholds derived from cumulative packet counts.
+
+\begin{table}[h]
+\centering
+\caption{Activity Level Classification Thresholds.}
+\label{tab:activity}
+\begin{tabular}{cc}
+\toprule
+Packet Count & Activity Level \\
+\midrule
+0 & Idle \\
+1--49 & Low \\
+50--499 & Medium \\
+$\geq$500 & High \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The SYN behaviour classifier operates on the ratio $R_{\text{SYN}} = \frac{\text{SYN Packets}}{\text{TCP Packets}}$. The classification thresholds are defined in Table~\ref{tab:syn_thresholds}.
+
+\begin{table}[h]
+\centering
+\caption{SYN Behaviour Classification Thresholds.}
+\label{tab:syn_thresholds}
+\begin{tabular}{cc}
+\toprule
+SYN Ratio ($R_{\text{SYN}}$) & Classification \\
+\midrule
+$< 0.05$ & Normal \\
+$0.05 \leq R < 0.20$ & Moderate \\
+$\geq 0.20$ & Aggressive \\
+No TCP traffic & Unknown \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Fragmentation behaviour is classified based on the ratio $R_{\text{Frag}} = \frac{\text{Fragmented Packets}}{\text{Total Packets}}$. A threshold of $R_{\text{Frag}} > 0.05$ (5\%) triggers an \texttt{Anomalous} classification, as modern networks rarely produce fragmented packets under normal conditions.
+
+Temporal activity is assessed via kernel monotonic timestamps. A host is classified as \texttt{Active} if seen within the last 5 seconds, \texttt{Recent} if within 30 seconds, and \texttt{Idle} otherwise.
+
+This abstraction distills packet-level data into security-relevant behavioural features. For example:
+
+\begin{verbatim}
+HostStats
+Packets      : 1000
+TCP          : 1000
+SYN          : 800
+        |
+        v
+HostProfile
+Protocol      : TCP Dominant
+SYN Behaviour : Aggressive (R_SYN = 0.80)
+\end{verbatim}
+
+\subsubsection{Trust Engine}
+The Trust Engine leverages these profiles to calculate a definitive trust score $T$ for each host, bounded between 0 and 100. 
+
+Newly discovered hosts are assigned a baseline trust value of 100. Observed deviations classified as security-relevant behaviours apply deterministic penalties:
+\begin{equation}
+T = \operatorname{clamp}\left(100 + P_{\text{SYN}} + P_{\text{Fragment}}, 0, 100\right)
+\end{equation}
+where $P_{\text{SYN}}$ represents the calculated penalty for abnormal SYN behaviour, and $P_{\text{Fragment}}$ denotes the penalty applied for fragmentation anomalies. The scoring logic is formalized in Algorithm~\ref{alg:trust}.
+
+\begin{algorithm}[h]
+\caption{ADG Host Trust Computation}
+\label{alg:trust}
+\begin{algorithmic}[1]
+\REQUIRE HostProfile $P$
+\ENSURE Trust score $T$
+\STATE $T \leftarrow 100$
+\STATE $S \leftarrow 0$
+\STATE $F \leftarrow 0$
+\IF{$P.syn\_behavior = \text{Moderate}$}
+    \STATE $S \leftarrow -20$
+\ELSIF{$P.syn\_behavior = \text{Aggressive}$}
+    \STATE $S \leftarrow -50$
+\ENDIF
+\IF{$P.frag\_behavior = \text{Anomalous}$}
+    \STATE $F \leftarrow -85$
+\ENDIF
+\STATE $T \leftarrow T + S + F$
+\STATE $T \leftarrow \operatorname{clamp}(T, 0, 100)$
+\RETURN $T$
+\end{algorithmic}
+\end{algorithm}
+
+The current penalty matrix is outlined in Table~\ref{tab:scoring}.
+
+\begin{table}[h]
+\centering
+\caption{Trust Engine Scoring Model.}
+\label{tab:scoring}
+\begin{tabular}{ccc}
+\toprule
+Signal & Behaviour & Penalty \\
+\midrule
+SYN & Normal & 0 \\
+SYN & Moderate & -20 \\
+SYN & Aggressive & -50 \\
+Fragmentation & Normal & 0 \\
+Fragmentation & Anomalous & -85 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+An important design characteristic of the current Trust Engine is the deliberate exclusion of weak behavioural indicators from direct trust penalties. High traffic volume, low activity, UDP-dominant traffic, and ICMP-dominant traffic are not independently treated as malicious. This prevents commonly occurring legitimate behaviours from directly reducing host trust in the absence of stronger evidence.
+
+The numerical score is quantized into actionable trust levels, as defined in Table~\ref{tab:levels}.
+
+\begin{table}[h]
+\centering
+\caption{Trust Classification Matrix.}
+\label{tab:levels}
+\begin{tabular}{cc}
+\toprule
+Score Range & Trust Level \\
+\midrule
+90--100 & Trusted \\
+70--89 & Normal \\
+40--69 & Suspicious \\
+0--39 & Untrusted \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Trust State Sharing}
+Upon computation, the resolved trust classifications are exported via a pinned eBPF map designated \texttt{HOST\_TRUST}. This pinned map acts as the unified state-sharing mechanism between the Rust computation daemon and the SDN controller. 
+
+The analytical data flow operates as follows:
+\begin{equation}
+\texttt{HOST\_STATS} \rightarrow \text{Trust Engine} \rightarrow \texttt{HOST\_TRUST} \rightarrow \text{SDN Controller}
+\end{equation}
+
+This decoupled architecture separates telemetry collection processes from the network enforcement logic.
+
+% ============================================================
+% Enforcement Plane
+% ============================================================
+
+\section{SDN Enforcement Plane}
+
+The enforcement plane is instantiated utilizing the OS-Ken SDN controller, leveraging OpenFlow 1.3 support. The controller executes three primary directives:
+\begin{enumerate}
+\item Processing \texttt{Packet-In} event triggers from managed OpenFlow switches.
+\item Querying real-time host trust states from the \texttt{HOST\_TRUST} map.
+\item Synthesizing and installing adaptive forwarding policies.
+\end{enumerate}
+
+The embedded policy engine maps computed trust levels directly to deterministic security actions (Table~\ref{tab:actions}).
+
+\begin{table}[h]
+\centering
+\caption{Trust-Aware Policy Actions.}
+\label{tab:actions}
+\begin{tabular}{ccc}
+\toprule
+Trust Level & Action & OpenFlow Priority \\
+\midrule
+Trusted & ALLOW & 1 \\
+Suspicious & MIRROR & 120 \\
+Untrusted & DROP & 200 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The \texttt{MIRROR} policy leverages OpenFlow multi-action rules to achieve packet duplication without dedicated port mirroring infrastructure. The installed flow rule contains two output actions: \texttt{OFPP\_NORMAL} for standard L2 forwarding, and \texttt{OFPP\_CONTROLLER} with a 128-byte snapshot for inspection. This ensures that suspicious hosts remain reachable (avoiding false-positive disconnection) while simultaneously providing the controller with packet header copies for deeper analysis.
+
+\subsection{Multi-Controller Role Negotiation}
+The controller requests \texttt{OFPCR\_ROLE\_EQUAL} upon switch connection via the \texttt{OFPRoleRequest} message. This enables multi-controller topologies where secondary controllers can write flows and receive asynchronous messages (PacketIn, PortStatus), supporting failover without manual reconfiguration.
+
+\subsection{Proactive Trust Change Detection}
+In addition to reactive \texttt{Packet-In} handling, the enforcement plane incorporates a background monitoring thread (\texttt{TrustChangeDetector}) that periodically polls the \texttt{HOST\_TRUST} map for all registered hosts every 2 seconds. When a policy transition is detected (e.g., a host's trust degrades from ALLOW to DROP), the detector proactively installs global IP-level OpenFlow rules across all connected switches without waiting for the next \texttt{Packet-In} event. This mechanism ensures that hosts exhibiting sustained malicious behaviour are blocked even if no new packets are forwarded to the controller.
+
+Upon trust recovery, the detector issues \texttt{OFPFC\_DELETE} commands to remove restrictive flow rules, restoring normal forwarding for rehabilitated hosts.
+
+% ============================================================
+% Implementation Details
+% ============================================================
+
+\section{Implementation Details}
+
+The ADG prototype integrates the component stack outlined in Table~\ref{tab:stack}.
+
+\begin{table}[h]
+\centering
+\caption{ADG Implementation Stack.}
+\label{tab:stack}
+\begin{tabular}{ll}
+\toprule
+Component & Technology \\
+\midrule
+Packet Telemetry & eBPF/XDP \\
+Kernel Interface & Aya-eBPF \\
+Trust Engine & Rust \\
+SDN Controller & OS-Ken \\
+Virtual Network & Mininet \\
+Switching Layer & Open vSwitch \\
+Protocol & OpenFlow 1.3 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{XDP Telemetry Collector}
+The kernel-space XDP program performs:
+\begin{enumerate}
+\item Ethernet frame header parsing.
+\item IPv4 header validation and parsing.
+\item Transport layer protocol identification.
+\item TCP SYN flag extraction.
+\item Updates to host statistical counters.
+\end{enumerate}
+This data is maintained in a kernel-resident map mapping \texttt{IPv4} addresses to \texttt{HostStats}.
+
+\subsection{Rust Trust Service}
+Operating in userspace, the Rust daemon is responsible for:
+\begin{enumerate}
+\item Compiling and loading the XDP bytecode.
+\item Attaching the XDP program to designated network interfaces.
+\item Polling the \texttt{HOST\_STATS} eBPF map at 2-second intervals.
+\item Computing windowed delta statistics between consecutive snapshots.
+\item Synthesizing \texttt{HostProfiles} from the delta (not cumulative) counters.
+\item Calculating deterministic trust scores.
+\item Updating the \texttt{HOST\_TRUST} pinned map.
+\end{enumerate}
+
+The windowed delta mechanism is critical for enabling autonomous trust recovery. Because the eBPF map stores cumulative counters, a na\"ive approach would penalize hosts indefinitely for past behaviour. By computing $\Delta = \text{current} - \text{previous}$ at each polling interval, the Trust Engine evaluates only the most recent 2-second window of activity. When malicious traffic ceases, the delta counters return to zero, yielding a clean behavioural profile and full trust restoration without manual intervention.
+
+\subsection{SDN Controller Integration}
+The OS-Ken controller manages the network fabric by handling:
+\begin{itemize}
+\item OpenFlow event processing.
+\item Trust lookups via the pinned map.
+\item Automated policy evaluation.
+\item Dynamic OpenFlow rule installation and modification.
+\end{itemize}
+The controller is abstracted away from deep packet inspection tasks. It relies on the aggregated behavioural intelligence generated by the underlying trust computation layer.
+
+% ============================================================
+% Experimental Evaluation
+% ============================================================
+
+\section{Experimental Evaluation}
+
+The ADG prototype was evaluated in a testbed utilizing Mininet~\cite{lantz2010mininet}. The primary objective was to validate the operational functionality of the adaptive security pipeline:
+\begin{equation}
+\text{Traffic} \rightarrow \text{Telemetry} \rightarrow \text{Trust} \rightarrow \text{Policy} \rightarrow \text{Enforcement}
+\end{equation}
+
+The evaluation targeted four specific research questions:
+\begin{enumerate}
+\item Can the eBPF/XDP subsystem observe host-level telemetry from active network interfaces?
+\item Do distinct behavioural shifts proportionally modify the computed trust values?
+\item Is the SDN controller capable of adapting switch forwarding policies based on those fluctuating trust values?
+\item Does the implemented Trust Engine produce deterministic and consistent decisions across normal and anomalous behavioural profiles?
+\end{enumerate}
+
+\subsection{Experimental Environment}
+The prototype was deployed within an Ubuntu virtualized environment. The configuration parameters of the experimental stack are detailed in Table~\ref{tab:env}.
+
+\begin{table}[h]
+\centering
+\caption{Experimental Environment Configuration.}
+\label{tab:env}
+\begin{tabular}{ll}
+\toprule
+Component & Configuration \\
+\midrule
+Virtualization & QEMU/KVM \\
+Operating System & Ubuntu Linux \\
+SDN Emulator & Mininet \\
+Switch & Open vSwitch 2.17 \\
+Controller & OS-Ken \\
+OpenFlow Version & 1.3 \\
+eBPF Framework & Aya-eBPF \\
+Language & Rust and Python \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The evaluation topology comprised an SDN network structure:
+\begin{verbatim}
+       h1
+       |
+       |
+      s1
+       |
+       |
+       h2
+\end{verbatim}
+
+The Open vSwitch instance (\texttt{s1}) was connected to the OS-Ken controller via OpenFlow 1.3. The eBPF/XDP program was attached to the switch interface (\texttt{s1-eth1}), ensuring that packet telemetry generated by Mininet hosts was intercepted by the monitoring component.
+
+\subsection{Test Methodology}
+The evaluation framework encompassed two validation stages: standalone unit testing of the software scoring logic and end-to-end integration testing in the virtual network environment.
+
+\subsubsection{Normal Traffic Baseline}
+Initial network experiments established a baseline of legitimate communication by generating standard ICMP echo requests between hosts:
+\begin{verbatim}
+h1 ping -c 5 h2
+\end{verbatim}
+
+\subsubsection{Behavioural Stress Scenario}
+A planned behavioural stress scenario uses TCP SYN-heavy traffic to exercise the SYN classification component:
+\begin{verbatim}
+h1 hping3 -S -p 80 -c 200 h2
+\end{verbatim}
+
+% ============================================================
+% Results
+% ============================================================
+
+\section{Results}
+
+\subsection{Software Validation (Unit Testing)}
+The Trust Engine was independently validated using nine Rust unit tests covering distinct profile combinations. All nine tests passed successfully, confirming the deterministic behaviour of the implemented scoring rules and directly addressing Research Question 4. The unit testing results are summarized in Table~\ref{tab:unitresults}.
+
+\begin{table}[h]
+\centering
+\caption{Trust Engine Unit-Test Validation.}
+\label{tab:unitresults}
+\begin{tabular}{lcc}
+\toprule
+Test Case & Expected Score & Result \\
+\midrule
+Normal SYN & 100 & PASS \\
+Moderate SYN & 80 & PASS \\
+Aggressive SYN & 50 & PASS \\
+Unknown SYN & 100 & PASS \\
+Anomalous Fragmentation & 15 & PASS \\
+High Activity & 100 & PASS \\
+Idle Host & 100 & PASS \\
+UDP Dominant & 100 & PASS \\
+ICMP Dominant & 100 & PASS \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The SDN Policy Engine was similarly validated with eleven unit tests covering all trust score boundary conditions. Table~\ref{tab:policyresults} summarizes the boundary tests.
+
+\begin{table}[h]
+\centering
+\caption{Policy Engine Boundary-Condition Validation.}
+\label{tab:policyresults}
+\begin{tabular}{ccc}
+\toprule
+Trust Score & Expected Action & Result \\
+\midrule
+100 & ALLOW & PASS \\
+95 & ALLOW & PASS \\
+90 & ALLOW & PASS \\
+89 & ALLOW (LOG) & PASS \\
+70 & ALLOW (LOG) & PASS \\
+69 & MIRROR & PASS \\
+40 & MIRROR & PASS \\
+39 & REDIRECT & PASS \\
+20 & REDIRECT & PASS \\
+19 & DROP & PASS \\
+0 & DROP & PASS \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+An escalation and recovery integration test verified the \texttt{TrustChangeDetector} by simulating a host whose trust degrades from 100 (ALLOW) to 50 (MIRROR) to 15 (DROP), and subsequently recovers to 100 (ALLOW). At each transition, the test asserted that the correct \texttt{install\_ip\_policy\_flow} call was dispatched to the mock switch datapath.
+
+Additionally, four controller mock tests validated the \texttt{Packet-In} handler for ALLOW, MIRROR, and DROP paths, as well as the EQUAL role request during switch feature negotiation. Four trust store tests verified BPF map lookup behaviour for missing entries (ENOENT), existing entries, unavailable maps, and permission errors. In total, the unit and integration test suite comprises 51 tests across Rust and Python components, all passing.
+
+\subsection{Telemetry Collection Validation}
+Initial validation confirmed the attachment of the XDP program and the observation of traffic generated within the Mininet testbed. The operational data pipeline was verified as follows:
+\begin{verbatim}
+Mininet Traffic
+       |
+       v
+XDP Packet Parser
+       |
+       v
+HOST_STATS BPF Map
+       |
+       v
+Rust Userspace Reader
+\end{verbatim}
+
+The successful binding of the XDP hook was confirmed via system logs:
+\begin{verbatim}
+Attached XDP program to s1-eth1.
+Monitoring HOST_STATS map...
+\end{verbatim}
+
+\subsection{Trust State Propagation and Policy Adaptation}
+Following trust computation, the active state was queried by the OS-Ken SDN controller from the \texttt{HOST\_TRUST} map.
+
+For hosts retaining a baseline trusted state, the controller enforced standard forwarding:
+\begin{verbatim}
+Host : 10.0.0.1
+Trust : 100
+Decision : ALLOW
+Priority : 1
+\end{verbatim}
+
+When suspicious behaviour was flagged in the trust map, the controller executed a policy update:
+\begin{verbatim}
+Host : 10.0.0.2
+Trust : 50
+Decision : MIRROR
+Priority : 120
+\end{verbatim}
+
+The dynamic installation of the flow rule on the Open vSwitch forwarding plane was verified using Open vSwitch utilities:
+\begin{verbatim}
+ovs-ofctl -O OpenFlow13 dump-flows s1
+\end{verbatim}
+The output confirmed the instantiation of the policy rule (\texttt{priority=120}) targeting the suspicious host address. This provides evidence that the trust decisions formulated in userspace are translated into corresponding flow rules in the Open vSwitch forwarding plane.
+
+\subsection{Dynamic Trust Enforcement Over Time}
+Fig.~\ref{fig:trust_vs_time} illustrates the temporal dynamics of the trust enforcement pipeline for a single host over a 60-second observation window. The host begins with full trust ($T=100$). At $t=16$s, a sustained SYN-heavy attack causes the trust score to drop progressively through the MIRROR zone into the DROP zone ($T=15$) by $t=35$s. When the attack ceases at $t=46$s, the windowed delta mechanism produces clean behavioural deltas, and the trust score recovers autonomously, returning to full trust by $t=55$s. This recovery requires no manual intervention---it is a direct consequence of the rolling-window telemetry design.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{Images/trust_enf.png}
+\caption{Dynamic trust enforcement over time. The coloured zones indicate the active enforcement policy at each trust level: green (ALLOW, $T \geq 90$), yellow (MIRROR, $40 \leq T < 90$), orange (REDIRECT, $20 \leq T < 40$), and red (DROP, $T < 20$).}
+\label{fig:trust_vs_time}
+\end{figure}
+
+\subsection{SYN Ratio and Trust Score Correlation}
+Fig.~\ref{fig:telemetry_dashboard} presents the correlation between observed SYN ratios and the computed trust scores for three representative host profiles. Under normal web traffic ($R_{\text{SYN}} = 5\%$), the trust score remains at 100. As the SYN ratio increases to 45\% (Moderate) and 95\% (Aggressive), the Trust Engine applies proportionally increasing penalties, reducing the scores to 80 and 15 respectively.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{Images/trust_score.png}
+\caption{Host profiling and trust score correlation. The dual-axis chart shows the inverse relationship between the observed TCP SYN ratio (red) and the computed trust score (blue).}
+\label{fig:telemetry_dashboard}
+\end{figure}
+
+\subsection{Advanced Threat Simulation}
+To evaluate the robustness of the trust model beyond basic flood scenarios, four adversarial simulation cases were constructed. Each case generates a 60-second time series of trust scores and policy actions.
+
+\subsubsection{Case A: Stealth Slow-Rate Attack}
+A stealth attacker gradually increases malicious activity to avoid triggering immediate detection. Fig.~\ref{fig:advanced_cases} (top) shows the trust score declining slowly from 100 at $t=10$s to 40 by $t=40$s, at which point the host stabilizes in the MIRROR zone ($T=45$). This demonstrates that ADG can isolate low-and-slow attackers into monitoring zones without false-positive disconnection.
+
+\subsubsection{Case B: Sudden Port Scan}
+An aggressive port scanner (e.g., \texttt{nmap -sS}) triggers an immediate trust collapse. The trust score plummets from 100 to 10 at $t=15$s, entering the DROP zone instantly. Recovery begins at $t=26$s and proceeds gradually, reaching ALLOW by $t=49$s. This validates the system's ability to respond immediately to volumetric reconnaissance.
+
+\subsubsection{Case C: Oscillating Attacker}
+An adversary attempting to game the trust system alternates between attack bursts and quiet periods. Two attack episodes at $t=11$--$15$s and $t=36$--$40$s each drive the trust to 0 (DROP). The system correctly re-penalizes the host on each recurrence, demonstrating that trust recovery does not provide immunity against subsequent attacks.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{Images/advanced.png}
+\caption{Advanced adversarial simulation: (Top) stealth slow-rate attack isolating the host to MIRROR, (Middle) sudden port scan with immediate DROP and slow recovery, (Bottom) oscillating attacker gaming the trust system.}
+\label{fig:advanced_cases}
+\end{figure}
+
+\subsubsection{Case D: Fragmentation-Based Evasion}
+A fragmentation-based evasion attack (e.g., \texttt{hping3 -f}) is simulated in Fig.~\ref{fig:frag_attack}. The 85-point fragmentation penalty drives the trust from 100 to 15 within 5 seconds of attack onset at $t=16$s. The host enters the DROP zone and remains blocked until $t=36$s, when gradual recovery begins. This validates the detection of fragmentation-based evasion techniques such as Teardrop and Ping of Death variants.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{Images/frag.png}
+\caption{Trust response to a fragmented packet attack. The severe 85-point penalty immediately drives the host into the DROP zone.}
+\label{fig:frag_attack}
+\end{figure}
+
+% ============================================================
+% Discussion
+% ============================================================
+
+\section{Discussion}
+
+The evaluation demonstrates that the ADG framework integrates three security functions:
+\begin{enumerate}
+\item Kernel-level packet observation via eBPF/XDP.
+\item Behaviour-based trust assessment in userspace.
+\item Programmable SDN policy enforcement.
+\end{enumerate}
+
+Unlike static security rules, ADG recalculates host security posture based on observed activity profiles.
+
+\subsection{Design Decisions: False-Positive Avoidance}
+An important design characteristic of the current Trust Engine is the deliberate exclusion of weak behavioural indicators from direct trust penalties. High traffic volume, low activity, UDP-dominant traffic, and ICMP-dominant traffic are not independently treated as malicious. This prevents commonly occurring legitimate behaviours---such as DNS resolution (UDP), network diagnostics (ICMP), or bulk file transfers (high volume TCP)---from directly reducing host trust in the absence of stronger evidence. The unit tests for these conditions (Table~\ref{tab:unitresults}) confirm that all produce a trust score of 100.
+
+\subsection{Inter-Plane Communication}
+The use of pinned eBPF maps as a shared-memory IPC mechanism eliminates the overhead of socket-based or REST API communication between the observation and enforcement planes. The Python controller reads the \texttt{HOST\_TRUST} map via direct \texttt{bpf()} syscalls using \texttt{ctypes}, achieving low-latency trust lookups without serialization overhead~\cite{ebpf}.
+
+\subsection{Limitations of Current Evaluation}
+The advanced simulation cases (Section VII-F) use synthetically generated trust trajectories to validate the policy engine's response characteristics. While these simulations confirm the correct mapping of trust scores to enforcement actions, they do not capture the full latency and throughput characteristics of the kernel-to-controller pipeline under production traffic loads. Quantitative performance benchmarking remains future work.
+
+% ============================================================
+% Limitations and Future Work
+% ============================================================
+
+\section{Limitations and Future Work}
+
+While the current implementation demonstrates the core adaptive trust pipeline, several limitations and planned extensions have been identified through a systematic telemetry audit.
+
+\subsection{Telemetry Gap Analysis}
+A comprehensive audit of the observation plane revealed that the XDP program currently parses but does not store several security-relevant fields: destination IP addresses, TCP destination ports, and TCP RST/FIN/ACK flags. These fields are available in the \texttt{Ipv4Hdr} and \texttt{TcpHdr} structures but are not written to \texttt{HOST\_STATS}. Extending the BPF map to include these fields would enable port scan detection (via destination port diversity), lateral movement detection (via destination IP diversity), and failed connection analysis (via RST:SYN ratios).
+
+\subsection{Planned Extensions}
+The following extensions are prioritized for near-term development:
+\begin{itemize}
+\item \textbf{Destination intelligence}: tracking unique destination IPs and ports per host to detect scanning and lateral movement patterns.
+\item \textbf{TCP RST tracking}: extracting RST flags from the existing TCP header parser to identify failed connection ratios characteristic of port scans.
+\item \textbf{Trust history}: maintaining a circular buffer of recent trust scores to detect oscillating attackers who alternate between attack bursts and quiet periods.
+\item \textbf{Packet size statistics}: tracking min/max packet sizes to identify uniform small packets (scan signatures) or uniform large packets (exfiltration indicators).
+\end{itemize}
+
+\subsection{Multi-Controller Coordination}
+While the prototype now requests \texttt{OFPCR\_ROLE\_EQUAL} for basic multi-controller support, full multi-controller coordination---including state synchronization across distributed controllers and consensus-based failover---remains future work.
+
+\subsection{Response Mechanics and Performance Benchmarking}
+Future work will extend the enforcement plane to support honeypot redirection~\cite{provos2004virtual}, automated deception via moving target defence~\cite{jajodia2011mtd}, and Weighted Max-Min Fairness (WMMF) bandwidth allocation for gradual throttling as an alternative to binary DROP. Additionally, quantitative evaluation of detection latency, CPU/memory overhead, throughput impacts, and false-positive rates under varying network loads remains an essential step for production deployment.
+
+% ============================================================
+% Conclusion
+% ============================================================
+
+\section{Conclusion}
+
+This paper presented the current implementation of the Active Defense Gateway (ADG), an eBPF-assisted adaptive trust enforcement framework for Software Defined Networks.
+
+The implemented prototype establishes a closed-loop pipeline in which network telemetry is collected using eBPF/XDP, transformed into behavioural host profiles, evaluated by a Rust-based Trust Engine, and shared with an SDN controller through a pinned eBPF map. The controller then uses the resulting trust state to select and install corresponding OpenFlow enforcement policies.
+
+The Trust Engine was independently validated through nine Rust unit tests, all of which passed. The Policy Engine was validated through eleven boundary-condition tests. Additional integration tests verified escalation and recovery behaviour across the ALLOW $\rightarrow$ MIRROR $\rightarrow$ DROP $\rightarrow$ ALLOW lifecycle, controller mock tests validated PacketIn handling and EQUAL role negotiation, and trust store tests confirmed correct BPF map lookup behaviour. In total, 51 automated tests across Rust and Python components confirm the system's deterministic behaviour. System-level testing demonstrated successful XDP attachment, host telemetry collection, trust-state propagation, controller-side trust evaluation, and adaptive policy transition.
+
+The windowed delta telemetry mechanism enables autonomous trust recovery: when malicious traffic ceases, the behavioural profile naturally clears, restoring full trust without manual intervention.
+
+Four adversarial simulation scenarios---stealth slow-rate attack, sudden port scan, oscillating attacker, and fragmentation-based evasion---demonstrated that the trust model responds appropriately to diverse threat profiles. The results confirm that the ADG architecture achieves adaptive, behaviour-driven network security enforcement.
+
+The present implementation is intentionally limited to a small Mininet topology. Consequently, claims regarding large-scale scalability, distributed controller resilience, automated deception, and production-level mitigation are outside the scope of the current evaluation.
+
+A systematic telemetry audit identified concrete extension targets: destination IP/port tracking for port scan and lateral movement detection, TCP RST extraction for failed connection analysis, and trust history buffers for anti-gaming oscillation detection. Future work will extend the architecture toward these richer behavioural signals, alongside automated deception, honeypot integration, and quantitative performance evaluation.
+
+% ============================================================
+% References
+% ============================================================
+
+\begin{thebibliography}{99}
+
+\bibitem{mckeown2008openflow}
+N.~McKeown \emph{et~al.}, ``OpenFlow: Enabling innovation in campus networks,'' \emph{ACM SIGCOMM Comput. Commun. Rev.}, vol.~38, no.~2, pp. 69--74, 2008.
+
+\bibitem{lantz2010mininet}
+B.~Lantz, B.~Heller, and N.~McKeown, ``A network in a laptop: Rapid prototyping for software-defined networks,'' in \emph{Proc. 9th ACM Workshop Hot Topics Netw. (HotNets-IX)}, 2010, pp. 1--6.
+
+\bibitem{hoiland2018express}
+T.~H{\o}iland-J{\o}rgensen \emph{et~al.}, ``The eXpress Data Path: Fast programmable packet processing in the operating system kernel,'' in \emph{Proc. 14th Int. Conf. Emerg. Netw. Exp. Technol. (CoNEXT)}, 2018, pp. 54--66.
+
+\bibitem{miano2023sketching}
+S.~Miano, X.~Chen, R.~B. Basat, and G.~Antichi, ``Fast in-kernel traffic sketching in eBPF,'' \emph{ACM SIGCOMM Comput. Commun. Rev.}, vol.~53, no.~1, pp. 3--13, 2023.
+
+\bibitem{ebpf}
+D.~Borkmann, ``eBPF architecture and instruction set,'' \emph{Linux Kernel Documentation}, 2020. [Online]. Available: \url{https://www.kernel.org/doc/html/latest/bpf/}
+
+\bibitem{nist800207}
+S.~Rose, O.~Borchert, S.~Mitchell, and S.~Connelly, ``Zero Trust Architecture,'' NIST Special Publication 800-207, 2020.
+
+\bibitem{denning1987ids}
+D.~E. Denning, ``An intrusion-detection model,'' \emph{IEEE Trans. Softw. Eng.}, vol. SE-13, no.~2, pp. 222--232, 1987.
+
+\bibitem{mirkovic2004survey}
+J.~Mirkovic and P.~Reiher, ``A taxonomy of DDoS attack and DDoS defense mechanisms,'' \emph{ACM SIGCOMM Comput. Commun. Rev.}, vol.~34, no.~2, pp. 39--53, 2004.
+
+\bibitem{tolay2025ebpf}
+A.~Tolay, ``eBPF-based real-time DDoS mitigation for IoT edge devices,'' \emph{arXiv preprint arXiv:2508.00851}, 2025.
+
+\bibitem{shannon1948mathematical}
+C.~E. Shannon, ``A mathematical theory of communication,'' \emph{Bell Syst. Tech. J.}, vol.~27, no.~3, pp. 379--423, 1948.
+
+\bibitem{provos2004virtual}
+N.~Provos, ``A virtual honeypot framework,'' in \emph{Proc. 13th USENIX Security Symp.}, 2004, pp. 1--14.
+
+\bibitem{jajodia2011mtd}
+S.~Jajodia, A.~K. Ghosh, V.~Swarup, C.~Wang, and X.~S. Wang, \emph{Moving Target Defense: Creating Asymmetric Uncertainty for Cyber Threats}. Springer, 2011.
+
+\bibitem{aya2024}
+Aya Contributors, ``Aya: An eBPF library for the Rust programming language,'' 2024. [Online]. Available: \url{https://aya-rs.dev/}
+
+\bibitem{ovs2015}
+B.~Pfaff \emph{et~al.}, ``The design and implementation of Open vSwitch,'' in \emph{Proc. 12th USENIX Symp. Netw. Syst. Design Implementation (NSDI)}, 2015, pp. 117--130.
+
+\bibitem{ryu2023}
+OS-Ken Contributors, ``OS-Ken SDN framework,'' 2023. [Online]. Available: \url{https://github.com/os-ken/os-ken}
+
+\end{thebibliography}
+
+\end{document}
