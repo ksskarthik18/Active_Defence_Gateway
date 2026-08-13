@@ -28,12 +28,23 @@ class ADGController(app_manager.OSKenApp):
         self.datapaths = {}
         self.detector = TrustChangeDetector(self)
 
+    # pyrefly: ignore [missing-attribute]
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
         datapath = ev.msg.datapath
         self.datapaths[datapath.id] = datapath
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
+
+        # Claim EQUAL role so this controller can write flows
+        # and receive async messages (PacketIn, PortStatus, etc.)
+        role_request = parser.OFPRoleRequest(
+            datapath, ofproto.OFPCR_ROLE_EQUAL, 0
+        )
+        datapath.send_msg(role_request)
+        self.logger.info(
+            "Requested EQUAL role for DPID=%s", datapath.id
+        )
 
         match = parser.OFPMatch()
         actions = [
@@ -44,6 +55,7 @@ class ADGController(app_manager.OSKenApp):
         ]
         self.flow_installer.install_default_flow(datapath, match, actions)
 
+    # pyrefly: ignore [missing-attribute]
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def packet_in_handler(self, ev):
         msg = ev.msg
@@ -82,9 +94,10 @@ class ADGController(app_manager.OSKenApp):
         else:
             out_port = ofproto.OFPP_FLOOD
 
+        src_ip = None
         ip_pkt = pkt.get_protocol(ipv4.ipv4)
         if ip_pkt:
-            src_ip = ip_pkt.src
+            src_ip = ip_pkt.src  # type: ignore
             
             # Register with detector for background monitoring
             self.detector.register_host(src_ip)
@@ -107,15 +120,15 @@ class ADGController(app_manager.OSKenApp):
 
         match = parser.OFPMatch(in_port=in_port, eth_src=src, eth_dst=dst)
 
-        if decision == Action.DROP:
-            # Install high priority drop flow, no PacketOut
-            self.flow_installer.install_policy_flow(datapath, match, decision, msg.buffer_id)
-            return
+        if decision in (Action.DROP, Action.MIRROR, Action.REDIRECT):
+            if src_ip:
+                self.flow_installer.install_ip_policy_flow(datapath, src_ip, decision)
+            if decision == Action.DROP:
+                return
 
-        # ALLOW, MIRROR, REDIRECT paths
-        # Only install flow if we know the destination port
-        if out_port != ofproto.OFPP_FLOOD:
-            self.flow_installer.install_policy_flow(datapath, match, decision, msg.buffer_id, out_port=out_port)
+        # ALLOW path (or forwarding for first PacketIn of MIRROR/REDIRECT)
+        if decision == Action.ALLOW and out_port != ofproto.OFPP_FLOOD:
+            self.flow_installer.install_policy_flow(datapath, match, Action.ALLOW, msg.buffer_id, out_port=out_port)
 
         # Send current packet out
         actions = [parser.OFPActionOutput(out_port)]

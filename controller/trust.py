@@ -1,4 +1,5 @@
 import ctypes
+import errno
 import os
 import socket
 import struct
@@ -45,8 +46,8 @@ def bpf_syscall(cmd, attr_struct):
     
     ret = libc.syscall(__NR_bpf, cmd, ctypes.byref(buffer), 144)
     if ret < 0:
-        errno = ctypes.get_errno()
-        raise OSError(errno, os.strerror(errno))
+        err = ctypes.get_errno()
+        raise OSError(err, os.strerror(err))
     return ret
 
 class TrustStore:
@@ -73,7 +74,8 @@ class TrustStore:
         if self.map_fd is None:
             self._open_map()
             if self.map_fd is None:
-                return 50 # Default trust score if map is unavailable
+                logger.error("HOST_TRUST map unavailable; cannot determine trust for %s", ip)
+                return 100
 
         try:
             ip_bytes = socket.inet_aton(ip)
@@ -93,8 +95,22 @@ class TrustStore:
             
             return value.score
         except OSError as e:
-            # Entry not found (ENOENT) or other error
-            return 50
+            if e.errno == errno.ENOENT:  # ENOENT: host is not currently in HOST_TRUST
+                logger.debug(
+                    "No trust entry for %s; using default trust 100",
+                    ip
+                )
+                return 100
+
+            logger.error(
+                "HOST_TRUST lookup failed for %s: %s",
+                ip,
+                e
+            )
+            return 100
         except Exception as e:
-            logger.error("Error looking up trust for %s: %s", ip, e)
-            return 50
+            logger.exception(
+                "Unexpected HOST_TRUST lookup error for %s",
+                ip
+            )
+            return 100
