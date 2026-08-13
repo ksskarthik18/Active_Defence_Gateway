@@ -73,6 +73,7 @@ os-ken/
 .vscode/
 .idea/
 *.code-workspace
+pyrightconfig.json
 
 
 ############################
