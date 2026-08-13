@@ -56,6 +56,38 @@ pub struct TrustEntry {
 #[cfg(feature = "user")]
 unsafe impl aya::Pod for TrustEntry {}
 
+// ===== Sprint 7/8 Preparation =====
+// Extended telemetry struct for future destination tracking,
+// port scan detection, and flow analysis.
+// NOT used by the active pipeline — preparation only.
+
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct ExtendedHostStats {
+    // --- Existing fields (mirror of HostStats) ---
+    pub packets: u64,
+    pub bytes: u64,
+    pub tcp_packets: u64,
+    pub udp_packets: u64,
+    pub icmp_packets: u64,
+    pub syn_packets: u64,
+    pub frag_packets: u64,
+    pub last_seen: u64,
+    // --- HIGH priority: destination intelligence ---
+    pub rst_packets: u64,
+    pub unique_dst_ips: u32,
+    pub unique_dst_ports: u32,
+    pub flow_count: u32,
+    pub _pad: u32,
+    // --- MEDIUM priority: packet statistics ---
+    pub min_pkt_size: u16,
+    pub max_pkt_size: u16,
+    pub _pad2: u32,
+}
+
+#[cfg(feature = "user")]
+unsafe impl aya::Pod for ExtendedHostStats {}
+
 #[repr(C)]
 #[derive(Debug, Copy, Clone)]
 pub struct TcpHdr {
