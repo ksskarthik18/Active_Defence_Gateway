@@ -11,6 +11,7 @@ adg-xdp-common = { path = "../adg-xdp-common", features = ["user"] }
 anyhow = { workspace = true, default-features = true }
 aya = { workspace = true }
 aya-log = { workspace = true }
+bytes = "1.0"
 env_logger = { workspace = true }
 libc = { workspace = true }
 log = { workspace = true }
@@ -22,6 +23,7 @@ tokio = { workspace = true, features = [
     "signal",
     "time",
     "io-util",
+    "sync",
 ] }
 clap = { workspace = true, features = ["derive"] }
 [build-dependencies]

@@ -56,6 +56,22 @@ pub struct TrustEntry {
 #[cfg(feature = "user")]
 unsafe impl aya::Pod for TrustEntry {}
 
+#[repr(C)]
+#[derive(Debug, Copy, Clone)]
+pub struct FlowEvent {
+    pub src_ip: u32,
+    pub dst_ip: u32,
+    pub src_port: u16,
+    pub dst_port: u16,
+    pub protocol: u8,
+    pub flags: u8,
+    pub pkt_size: u16,
+    pub timestamp_ns: u64,
+}
+
+#[cfg(feature = "user")]
+unsafe impl aya::Pod for FlowEvent {}
+
 // ===== Sprint 7/8 Preparation =====
 // Extended telemetry struct for future destination tracking,
 // port scan detection, and flow analysis.
