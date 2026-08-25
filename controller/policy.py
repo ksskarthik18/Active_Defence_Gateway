@@ -24,7 +24,11 @@ class PolicyConfig:
     REDIRECT = 20
 
 class PolicyEngine:
-    def evaluate(self, trust: int) -> Action:
+    def evaluate(self, trust: int, risk: int = 0) -> Action:
+        # High network risk proactively forces MIRROR to isolate potential threats, overriding trust
+        if risk >= 80:
+            return Action.MIRROR
+
         if trust >= PolicyConfig.ALLOW:
             return Action.ALLOW
             

@@ -10,6 +10,8 @@ The Active Defense Gateway has successfully completed **Phase 1** of its impleme
 - **Enforcement Plane (Python OS-Ken):** An SDN controller that polls the Trust Engine without executing heavy logic, triggering dynamic OpenFlow `FlowMod` rules.
 - **Adaptive Policy States:** Hosts automatically transition between `ALLOW`, `MIRROR`, `REDIRECT`, and `DROP` based on their real-time behavior, with proactive fallback and recovery capabilities.
 - **Automated Evaluation Suite:** Python-based simulation scripts generating thesis-ready metrics and `matplotlib` graphs (Trust vs. Time, Telemetry Correlation).
+- **Network Intelligence Layer:** Real-time event streaming (`PerfEventArray`) mapping TCP control events (`SYN`, `FIN`, `RST`) to userspace for continuous, non-blocking flow and graph analysis.
+- **Proactive Risk Mitigation:** Dynamic `SecurityGraph` computing node degrees and Network Risk metrics, enforcing strict `MIRROR`/`DROP` rules on high-risk traffic.
 
 ---
 
@@ -76,7 +78,8 @@ python simulate_fragmentation.py
 ## **5. Roadmap**
 
 - [x] **Phase 1:** Intelligent Trust-Based SDN (eBPF Telemetry, Trust Engine, Dynamic OpenFlow)
-- [ ] **Phase 2:** Multi-controller SDN (Distributed control, failover, synchronization)
+- [x] **Phase 1.5:** Live Network Intelligence (PerfEventArray Streaming, Network Risk Scoring, Dynamic Security Graph)
+- [x] **Phase 2:** Multi-controller SDN (Distributed control, failover, synchronization)
 - [ ] **Phase 3:** Active Deception (Honeypots, Tarpits, moving target defense logic)
 - [ ] **Phase 4:** AI-assisted Trust (ML models, anomaly detection enhancements)
 - [ ] **Phase 5:** Production Hardening (Scalability tests, Kubernetes deployment)

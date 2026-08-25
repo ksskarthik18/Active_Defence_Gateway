@@ -8,6 +8,7 @@ from os_ken.lib.packet import ethernet
 from os_ken.lib.packet import ipv4
 from policy import Action, PolicyEngine
 from trust import TrustStore
+from risk import RiskStore
 from flow import FlowInstaller
 from detector import TrustChangeDetector
 from utils import get_logger, debug_packet
@@ -24,6 +25,7 @@ class ADGController(app_manager.OSKenApp):
         self.mac_to_port = {}
         self.policy_engine = PolicyEngine()
         self.trust_store = TrustStore()
+        self.risk_store = RiskStore()
         self.flow_installer = FlowInstaller(self.logger)
         self.datapaths = {}
         self.detector = TrustChangeDetector(self)
@@ -103,7 +105,8 @@ class ADGController(app_manager.OSKenApp):
             self.detector.register_host(src_ip)
             
             trust = self.trust_store.get(src_ip)
-            decision = self.policy_engine.evaluate(trust)
+            risk = self.risk_store.get(src_ip)
+            decision = self.policy_engine.evaluate(trust, risk)
             
             priority = 1
             if decision == Action.DROP: priority = 200
@@ -113,6 +116,7 @@ class ADGController(app_manager.OSKenApp):
             print("[POLICY]")
             print(f"Host : {src_ip}")
             print(f"Trust : {trust}")
+            print(f"Risk : {risk}")
             print(f"Decision : {decision.name}")
             print(f"Priority : {priority}\n")
         else:
