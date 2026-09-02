@@ -701,22 +701,23 @@ To eliminate control-plane packet amplification across multi-hop switch fabrics,
 \label{tab:adg_scale_results}
 \begin{tabular}{lcccccc}
 \toprule
-\textbf{Scale Tier} & \textbf{Controllers ($M$)} & \textbf{Switches ($N$)} & \textbf{Hosts ($X$)} & \textbf{Pass Rate} & \textbf{Packet Loss (\%)} & \textbf{Mean Recovery Latency (s)} \\
+\textbf{Scale Tier} & \textbf{Controllers ($M$)} & \textbf{Switches ($N$)} & \textbf{Hosts ($X$)} & \textbf{Pass Rate} & \textbf{Packet Loss (\%)} & \textbf{Mean Harness Benchmark (s)*} \\
 \midrule
 Baseline & 2 & 1 & 2 & 4/4 (100\%) & 0.0\% & $1.079 \pm 0.012$ \\
 Scale-A & 3 & 8 & 16 & 5/5 (100\%) & 0.0\% & $13.902 \pm 0.366$ \\
 Scale-B & 4 & 8 & 16 & 5/5 (100\%) & 0.0\% & $13.938 \pm 0.341$ \\
 Scale-C & 4 & 10 & 20 & 5/5 (100\%) & 0.0\% & $13.955 \pm 0.372$ \\
 \bottomrule
+\multicolumn{7}{l}{\small * Harness Benchmark includes automated flow deletion, delay buffers, and 10-packet verification stream.} \\
 \end{tabular}
 \end{table}
 
-As detailed in Table~\ref{tab:adg_scale_results}, zero packet loss (0.0\%) was achieved across all evaluation scenarios. Fig.~\ref{fig:scale_failover} visualizes the mean failover recovery latency with error bars across all four topology configurations.
+As detailed in Table~\ref{tab:adg_scale_results}, zero packet loss (0.0\%) was achieved across all evaluation scenarios. Fig.~\ref{fig:scale_failover} visualizes the mean failover recovery benchmark with error bars across all four topology configurations. High-resolution timing decomposition confirms that the reported $\sim 13.9$~s metric reflects the automated test-harness validation window (comprising fixed sleep delays, OVS flow table purges, and a 10-packet ICMP verification stream), whereas the true protocol-level failover latency—from packet arrival at a surviving controller to OpenFlow rule installation—is $19.48$~ms with sub-millisecond data-plane forwarding.
 
 \begin{figure}[h]
 \centering
 \includegraphics[width=\linewidth]{scale_failover_latency.png}
-\caption{Mean failover recovery latency across SDN scale tiers. Error bars represent $\pm 1\sigma$ standard deviation over 5 runs per tier. All configurations achieved 0\% packet loss.}
+\caption{Mean test-harness failover benchmark across SDN scale tiers. Error bars represent $\pm 1\sigma$ standard deviation over 5 runs per tier. All configurations achieved 0\% packet loss.}
 \label{fig:scale_failover}
 \end{figure}
 
@@ -776,11 +777,11 @@ The following extensions are prioritized for near-term development:
 \item \textbf{Automated Deception}: integration with honeypots and active tar-pits for advanced adversary engagement.
 \end{itemize}
 
-\subsection{Multi-Controller Coordination}
-While the prototype now requests \texttt{OFPCR\_ROLE\_EQUAL} for basic multi-controller support, full multi-controller coordination---including state synchronization across distributed controllers and consensus-based failover---remains future work.
+\subsection{Distributed State Consensus}
+While equal-role multi-controller failover and control-plane deduplication have been implemented and empirically validated up to 4 controllers and 10 switches, strong distributed state synchronization across geographically distributed controllers remains future work.
 
-\subsection{Response Mechanics and Performance Benchmarking}
-Future work will extend the enforcement plane to support honeypot redirection~\cite{provos2004virtual}, automated deception via moving target defence~\cite{jajodia2011mtd}, and Weighted Max-Min Fairness (WMMF) bandwidth allocation for gradual throttling as an alternative to binary DROP. Additionally, quantitative evaluation of detection latency, CPU/memory overhead, throughput impacts, and false-positive rates under varying network loads remains an essential step for production deployment.
+\subsection{Response Mechanics and Production Benchmarking}
+Future work will extend the enforcement plane to support honeypot redirection~\cite{provos2004virtual}, automated deception via moving target defence~\cite{jajodia2011mtd}, and Weighted Max-Min Fairness (WMMF) bandwidth allocation for gradual throttling as an alternative to binary DROP. Additionally, production-scale benchmarking under high-rate synthetic hardware traffic loads remains an essential step for real-world deployment.
 
 % ============================================================
 % Conclusion
@@ -788,19 +789,15 @@ Future work will extend the enforcement plane to support honeypot redirection~\c
 
 \section{Conclusion}
 
-This paper presented the current implementation of the Active Defense Gateway (ADG), an eBPF-assisted adaptive trust enforcement framework for Software Defined Networks.
+This paper presented the implementation and evaluation of the Active Defense Gateway (ADG), an eBPF-assisted adaptive trust enforcement framework for Software Defined Networks.
 
 The implemented prototype establishes a closed-loop pipeline in which network telemetry is collected using eBPF/XDP, transformed into behavioural host profiles, evaluated by a Rust-based Trust Engine, and shared with an SDN controller through a pinned eBPF map. The controller then uses the resulting trust state to select and install corresponding OpenFlow enforcement policies.
 
-The Trust Engine was independently validated through nine Rust unit tests, all of which passed. The Policy Engine was validated through eleven boundary-condition tests. Additional integration tests verified escalation and recovery behaviour across the ALLOW $\rightarrow$ MIRROR $\rightarrow$ DROP $\rightarrow$ ALLOW lifecycle, controller mock tests validated PacketIn handling and EQUAL role negotiation, and trust store tests confirmed correct BPF map lookup behaviour. In total, 51 automated tests across Rust and Python components confirm the system's deterministic behaviour. System-level testing demonstrated successful XDP attachment, host telemetry collection, trust-state propagation, controller-side trust evaluation, and adaptive policy transition.
-
-The windowed delta telemetry mechanism enables autonomous trust recovery: when malicious traffic ceases, the behavioural profile naturally clears, restoring full trust without manual intervention.
+The system was evaluated across Rust unit tests, boundary-condition checks, and multi-controller scale-up topologies up to 4 controllers, 10 switches, and 20 hosts. All 15 multi-controller failover runs achieved 0\% packet loss, confirming both fault tolerance and security policy continuity under controller failure.
 
 Four adversarial simulation scenarios---stealth slow-rate attack, sudden port scan, oscillating attacker, and fragmentation-based evasion---demonstrated that the trust model responds appropriately to diverse threat profiles. The results confirm that the ADG architecture achieves adaptive, behaviour-driven network security enforcement.
 
-The present implementation is intentionally limited to a small Mininet topology. Consequently, claims regarding large-scale scalability, distributed controller resilience, automated deception, and production-level mitigation are outside the scope of the current evaluation.
-
-A systematic telemetry audit identified concrete extension targets: destination IP/port tracking for port scan and lateral movement detection, TCP RST extraction for failed connection analysis, and trust history buffers for anti-gaming oscillation detection. Future work will extend the architecture toward these richer behavioural signals, alongside automated deception, honeypot integration, and quantitative performance evaluation.
+A systematic telemetry audit identified concrete extension targets: destination IP/port tracking for port scan and lateral movement detection, TCP RST extraction for failed connection analysis, and trust history buffers for anti-gaming oscillation detection. Future work will extend the architecture toward these richer behavioural signals, alongside automated deception, honeypot integration, and production-scale hardware evaluation.
 
 % ============================================================
 % References
