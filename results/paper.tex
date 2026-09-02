@@ -690,6 +690,47 @@ A fragmentation-based evasion attack (e.g., \texttt{hping3 -f}) is simulated in 
 \label{fig:frag_attack}
 \end{figure}
 
+\subsection{Multi-Controller Architecture and Scalability Evaluation}
+To evaluate the resilience and performance of the ADG SDN architecture under distributed failure conditions, the multi-controller setup was extended to large-scale multi-switch topologies. The evaluated configurations include Scale-A (3 controllers, 8 switches, 16 hosts), Scale-B (4 controllers, 8 switches, 16 hosts), and Scale-C (4 controllers, 10 switches, 20 hosts) operating in OpenFlow 1.3 \texttt{OFPCR\_ROLE\_EQUAL} mode.
+
+To eliminate control-plane packet amplification across multi-hop switch fabrics, a sliding-window PacketIn deduplication cache (1.0~s window) was integrated into the controller pipeline. Across 15 automated experimental runs (5 per scale tier), surviving controllers took over packet processing seamlessly upon primary controller failure.
+
+\begin{table}[htbp]
+\centering
+\caption{ADG Multi-Controller Scalability and Failover Performance across Expanded SDN Topologies.}
+\label{tab:adg_scale_results}
+\begin{tabular}{lcccccc}
+\toprule
+\textbf{Scale Tier} & \textbf{Controllers ($M$)} & \textbf{Switches ($N$)} & \textbf{Hosts ($X$)} & \textbf{Pass Rate} & \textbf{Packet Loss (\%)} & \textbf{Mean Recovery Latency (s)} \\
+\midrule
+Baseline & 2 & 1 & 2 & 4/4 (100\%) & 0.0\% & $1.079 \pm 0.012$ \\
+Scale-A & 3 & 8 & 16 & 5/5 (100\%) & 0.0\% & $13.902 \pm 0.366$ \\
+Scale-B & 4 & 8 & 16 & 5/5 (100\%) & 0.0\% & $13.938 \pm 0.341$ \\
+Scale-C & 4 & 10 & 20 & 5/5 (100\%) & 0.0\% & $13.955 \pm 0.372$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+As detailed in Table~\ref{tab:adg_scale_results}, zero packet loss (0.0\%) was achieved across all evaluation scenarios. Fig.~\ref{fig:scale_failover} visualizes the mean failover recovery latency with error bars across all four topology configurations.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{scale_failover_latency.png}
+\caption{Mean failover recovery latency across SDN scale tiers. Error bars represent $\pm 1\sigma$ standard deviation over 5 runs per tier. All configurations achieved 0\% packet loss.}
+\label{fig:scale_failover}
+\end{figure}
+
+A key architectural contribution is the PacketIn deduplication cache, which resolved exponential control-plane amplification under multi-controller EQUAL mode. Fig.~\ref{fig:dedup_cpu} demonstrates the CPU overhead reduction from 82.4\% (saturated) to below 6.5\% per controller instance.
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=\linewidth]{dedup_cpu_comparison.png}
+\caption{Controller CPU utilization before and after PacketIn deduplication. Without deduplication, 3 EQUAL-mode controllers saturate at 82.4\% CPU; with the sliding-window cache, utilization drops to 6.2\%.}
+\label{fig:dedup_cpu}
+\end{figure}
+
+Furthermore, during active attack runs (SYN flood), surviving controllers successfully inherited host risk states and autonomously installed high-priority (\texttt{priority=120}) \texttt{MIRROR} policy flows on OVS switches, confirming ADG security policy continuity under distributed failure.
+
 % ============================================================
 % Discussion
 % ============================================================

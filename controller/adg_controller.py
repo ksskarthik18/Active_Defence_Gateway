@@ -6,6 +6,8 @@ from os_ken.ofproto import ofproto_v1_3
 from os_ken.lib.packet import packet
 from os_ken.lib.packet import ethernet
 from os_ken.lib.packet import ipv4
+import os
+import time
 from policy import Action, PolicyEngine
 from trust import TrustStore
 from risk import RiskStore
@@ -22,6 +24,7 @@ class ADGController(app_manager.OSKenApp):
 
     def __init__(self, *args, **kwargs):
         super(ADGController, self).__init__(*args, **kwargs)
+        self.controller_id = os.environ.get("ADG_CONTROLLER_ID", "C?")
         self.mac_to_port = {}
         self.policy_engine = PolicyEngine()
         self.trust_store = TrustStore()
@@ -29,6 +32,7 @@ class ADGController(app_manager.OSKenApp):
         self.flow_installer = FlowInstaller(self.logger)
         self.datapaths = {}
         self.detector = TrustChangeDetector(self)
+        self.pkt_seen = {}
 
     # pyrefly: ignore [missing-attribute]
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
@@ -45,7 +49,8 @@ class ADGController(app_manager.OSKenApp):
         )
         datapath.send_msg(role_request)
         self.logger.info(
-            "Requested EQUAL role for DPID=%s", datapath.id
+            "CONTROLLER=%s SWITCH_FEATURES DPID=%s Requested EQUAL role",
+            self.controller_id, datapath.id
         )
 
         match = parser.OFPMatch()
@@ -56,6 +61,11 @@ class ADGController(app_manager.OSKenApp):
             )
         ]
         self.flow_installer.install_default_flow(datapath, match, actions)
+
+        # Proactive ARP broadcast rule: flood ARP directly in hardware (prevents multi-controller amplification)
+        match_arp = parser.OFPMatch(eth_dst="ff:ff:ff:ff:ff:ff")
+        actions_arp = [parser.OFPActionOutput(ofproto.OFPP_FLOOD)]
+        self.flow_installer.install_default_flow(datapath, match_arp, actions_arp, priority=10)
 
     # pyrefly: ignore [missing-attribute]
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
@@ -79,8 +89,16 @@ class ADGController(app_manager.OSKenApp):
         dst = eth.dst
         src = eth.src
 
+        # PacketIn Deduplication Cache for EQUAL-mode Multi-Controller setups
+        now = time.time()
+        pkt_key = (dpid, in_port, src, dst)
+        if pkt_key in self.pkt_seen and (now - self.pkt_seen[pkt_key]) < 1.0:
+            return
+        self.pkt_seen[pkt_key] = now
+
         self.logger.info(
-            "Switch=%s SRC=%s DST=%s IN=%s",
+            "CONTROLLER=%s PACKET_IN Switch=%s SRC=%s DST=%s IN=%s",
+            self.controller_id,
             dpid,
             src,
             dst,
@@ -105,6 +123,9 @@ class ADGController(app_manager.OSKenApp):
             self.detector.register_host(src_ip)
             
             trust = self.trust_store.get(src_ip)
+            mock_trust = os.environ.get("ADG_MOCK_TRUST")
+            if mock_trust:
+                trust = int(mock_trust)
             risk = self.risk_store.get(src_ip)
             decision = self.policy_engine.evaluate(trust, risk)
             

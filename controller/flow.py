@@ -4,15 +4,15 @@ class FlowInstaller:
     def __init__(self, logger):
         self.logger = logger
 
-    def install_default_flow(self, datapath, match, actions):
-        """Installs the initial table-miss flow (priority 0)"""
+    def install_default_flow(self, datapath, match, actions, priority=0):
+        """Installs initial or proactive default flows (e.g. priority 0 table-miss or priority 10 ARP broadcast)"""
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
         
         inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
         mod = parser.OFPFlowMod(
             datapath=datapath,
-            priority=0,
+            priority=priority,
             match=match,
             instructions=inst
         )
